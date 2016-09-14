@@ -60,7 +60,7 @@ func runSet(db *sqlx.DB, steps []Step) error {
 	}
 
 	for len(steps) > 0 {
-		hash := createHash(steps[0].Up)
+		hash := createHash(steps[0].Migrate)
 		if _, ok := recordedMigrations[hash]; !ok {
 			break //we've found the migration to rewind to!
 		}
@@ -93,19 +93,19 @@ func runSet(db *sqlx.DB, steps []Step) error {
 			return err
 		}
 
-		_, err = tx.Exec(migration.Up)
+		_, err = tx.Exec(migration.Migrate)
 
 		if err != nil {
 			tx.Rollback()
 			return err
 		}
 
-		hash := createHash(migration.Up)
+		hash := createHash(migration.Migrate)
 
 		_, err = tx.Exec(`
 		INSERT into migration (hash, down)
 		VALUES ($1, $2);
-		`, hash, migration.Down)
+		`, hash, migration.Revert)
 
 		if err != nil {
 			tx.Rollback()
