@@ -66,7 +66,7 @@ func TestRevert(t *testing.T) {
 		t.Fatalf(`len(result) != 2, len(result) == "%v"`, len(result1))
 	}
 
-	clearMigrationsForNextTest()
+	clearStepsForNextTest()
 
 	Register([]Step{
 		{

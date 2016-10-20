@@ -22,7 +22,7 @@ func Register(set []Step) {
 	registeredMigrationSets = append(registeredMigrationSets, set)
 }
 
-func clearMigrationsForNextTest() {
+func clearStepsForNextTest() {
 	registeredMigrationSets = nil
 }
 
@@ -37,39 +37,46 @@ func Run(db *sqlx.DB) error {
 	sets := make([][]Step, len(registeredMigrationSets))
 	copy(sets, registeredMigrationSets)
 
-	recorded, err := collectRecordedMigrations(db)
+	recorded, err := fetchCompletedSteps(db)
 	if err != nil {
 		return err
 	}
 
 	for i, set := range sets {
-		sets[i] = rewindSet(set, recorded)
+		sets[i] = skipCompletedSteps(set, recorded)
 	}
 
-	err = doReverts(db, recorded)
+	err = doRecordedReverts(db, recorded)
 	if err != nil {
 		return err
 	}
 
-	//todo: detect the case where there's no progress
+	return runSteps(db, sets)
+}
 
+func runSteps(db *sqlx.DB, sets [][]Step) error {
 	mostRecentProgress := -1
 
+	//run the migration sets
 	for {
 		retry := false
 		for i, set := range sets {
-			newSet, progressMade, err := progressSet(db, set)
+			newSet, progressMade, err := tryProgressOnSet(db, set)
 			if err != nil {
 				return err
 			}
 
+			// track the most recent progress to detect an infinite loop
 			if progressMade {
 				mostRecentProgress = i
 			} else if mostRecentProgress == i && len(newSet) > 0 {
+				// if the most recent progress was from this set,
+				// but we didn't make progress this time,
+				// we must be caught in a loop. Fail
 				return fmt.Errorf("Unable to make progress on migration steps: %v", sets)
 			}
 
-			//if this set isn't done, we'll have to cycle back around
+			// if this set isn't done, we'll have to continue at least one more iteration
 			if len(newSet) > 0 {
 				retry = true
 			}
@@ -85,11 +92,11 @@ func Run(db *sqlx.DB) error {
 	return nil
 }
 
-func rewindSet(steps []Step, recorded map[string]string) []Step {
+func skipCompletedSteps(steps []Step, recorded map[string]string) []Step {
 	for len(steps) > 0 {
 		hash := createHash(steps[0].Migrate)
 		if _, ok := recorded[hash]; !ok {
-			break //we've found the migration to rewind to!
+			break //we've found the migration to start at. Everything else must be redone.
 		}
 		delete(recorded, hash)
 		steps = steps[1:]
@@ -98,7 +105,7 @@ func rewindSet(steps []Step, recorded map[string]string) []Step {
 	return steps
 }
 
-func doReverts(db *sqlx.DB, reverts map[string]string) error {
+func doRecordedReverts(db *sqlx.DB, reverts map[string]string) error {
 	// do the rewind process
 	// TODO: do this in reverse chronology!
 	for hash, down := range reverts {
@@ -119,7 +126,7 @@ func doReverts(db *sqlx.DB, reverts map[string]string) error {
 	return nil
 }
 
-func progressSet(db *sqlx.DB, steps []Step) ([]Step, bool, error) {
+func tryProgressOnSet(db *sqlx.DB, steps []Step) ([]Step, bool, error) {
 	progress := false
 
 	for len(steps) > 0 {
@@ -194,7 +201,7 @@ func checkMigrationTable(db *sqlx.DB) error {
 	return err
 }
 
-func collectRecordedMigrations(db *sqlx.DB) (map[string]string, error) {
+func fetchCompletedSteps(db *sqlx.DB) (map[string]string, error) {
 	//collect the recored migrations
 	rows, err := db.Query(`
 	SELECT hash, down
