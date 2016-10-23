@@ -11,25 +11,34 @@ import (
 )
 
 //todo: also test with mysql
-//todo: consider factoring into subtests and reusing the same connection
 
-func getConnection(t *testing.T) *sqlx.DB {
+func Test(t *testing.T) {
 	exec.Command("dropdb", "testPostgres").Run()
 	output, err := exec.Command("createdb", "testPostgres").CombinedOutput()
+	defer exec.Command("dropdb", "testPostgres").Run()
 	if err != nil {
 		log.Printf("couldn't create postgres db: %v, %s\n", err, output)
 	}
 
-	db, err := sqlx.Connect("postgres", "postgres://testuser:testpassword@localhost/testPostgres")
+	pg, err := sqlx.Connect("postgres", "postgres://testuser:testpassword@localhost/testPostgres")
 	if err != nil {
 		t.Fatalf("couldn't connect to postgres test db: %v\n", err)
 	}
 
-	return db
+	t.Run("revert", func(t *testing.T) {
+		testRevert(t, pg)
+	})
+
+	t.Run("prereq", func(t *testing.T) {
+		testPrereq(t, pg)
+	})
+
+	t.Run("whitespace", func(t *testing.T) {
+		testWhitespace(t, pg)
+	})
 }
 
-func TestRevert(t *testing.T) {
-	db := getConnection(t)
+func testRevert(t *testing.T, db *sqlx.DB) {
 	Register([]Step{
 		{
 			Migrate: `create table survive(val int)`,
@@ -114,9 +123,7 @@ func TestRevert(t *testing.T) {
 	}
 }
 
-func TestPrereq(t *testing.T) {
-	db := getConnection(t)
-
+func testPrereq(t *testing.T, db *sqlx.DB) {
 	Register([]Step{
 		{
 			Prereq: `
@@ -159,8 +166,7 @@ func TestPrereq(t *testing.T) {
 	}
 }
 
-func TestWhitespace(t *testing.T) {
-	db := getConnection(t)
+func testWhitespace(t *testing.T, db *sqlx.DB) {
 	Register([]Step{
 		{
 			Revert: `drop table test_whitespace`,
