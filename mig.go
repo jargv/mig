@@ -9,6 +9,7 @@ import (
 )
 
 var registeredMigrationSets [][]Step
+var taggedMigrationSets map[string][][]Step
 
 // Step represents a single step in a migration
 type Step struct {
@@ -18,24 +19,50 @@ type Step struct {
 }
 
 // Register queues a MigrationSet to be exectued when mig.Run(...) is called
-func Register(set []Step) {
-	registeredMigrationSets = append(registeredMigrationSets, set)
-}
+func Register(steps []Step, tags ...string) {
+	//copy to avoid refernce issues
+	steps = append([]Step{}, steps...)
 
-func clearStepsForNextTest() {
-	registeredMigrationSets = nil
+	if len(tags) == 0 {
+		registeredMigrationSets = append(registeredMigrationSets, steps)
+		return
+	}
+
+	if taggedMigrationSets == nil {
+		taggedMigrationSets = make(map[string][][]Step)
+	}
+
+	for _, tag := range tags {
+		taggedMigrationSets[tag] = append(taggedMigrationSets[tag], steps)
+	}
 }
 
 // Run executes the migration Steps which have been registered by `mig.Register`
 // on the given database connection
-func Run(db *sqlx.DB) error {
+func Run(db *sqlx.DB, tags ...string) error {
+	if len(tags) == 0 {
+		return run(db, registeredMigrationSets)
+	}
+
+	for _, tag := range tags {
+		err := run(db, taggedMigrationSets[tag])
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func run(db *sqlx.DB, steps [][]Step) error {
 	err := checkMigrationTable(db)
 	if err != nil {
 		return err
 	}
 
-	sets := make([][]Step, len(registeredMigrationSets))
-	copy(sets, registeredMigrationSets)
+	// copy so that the operations are not mutating
+	sets := make([][]Step, len(steps))
+	copy(sets, steps)
 
 	recorded, err := fetchCompletedSteps(db)
 	if err != nil {

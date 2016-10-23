@@ -9,6 +9,10 @@ import (
 	_ "github.com/lib/pq"
 )
 
+//todo: also test with mysql
+//todo: consider factoring into subtests and reusing the same connection
+//todo: handle whitespace and comments
+
 func getConnection(t *testing.T) *sqlx.DB {
 	exec.Command("dropdb", "testPostgres").Run()
 	output, err := exec.Command("createdb", "testPostgres").CombinedOutput()
@@ -39,9 +43,9 @@ func TestRevert(t *testing.T) {
 			`,
 			Revert: `drop table test_user`,
 		},
-	})
+	}, "TestRevert-1")
 
-	err := Run(db)
+	err := Run(db, "TestRevert-1")
 	if err != nil {
 		t.Fatalf(": %v\n", err)
 	}
@@ -66,8 +70,6 @@ func TestRevert(t *testing.T) {
 		t.Fatalf(`len(result) != 2, len(result) == "%v"`, len(result1))
 	}
 
-	clearStepsForNextTest()
-
 	Register([]Step{
 		{
 			Migrate: `create table survive(val int)`,
@@ -80,8 +82,8 @@ func TestRevert(t *testing.T) {
 				)
 			`,
 		},
-	})
-	err = Run(db)
+	}, "TestRevert-2")
+	err = Run(db, "TestRevert-2")
 	if err != nil {
 		t.Fatalf(": %v\n", err)
 	}
@@ -124,7 +126,7 @@ func TestPrereq(t *testing.T) {
 			  alter table test_prereq add column food text
 			`,
 		},
-	})
+	}, "TestPrereq")
 
 	Register([]Step{
 		{
@@ -132,9 +134,9 @@ func TestPrereq(t *testing.T) {
 			  create table test_prereq()
 			`,
 		},
-	})
+	}, "TestPrereq")
 
-	err := Run(db)
+	err := Run(db, "TestPrereq")
 	if err != nil {
 		t.Fatalf("couldn't run migrations: %v\n", err)
 	}
