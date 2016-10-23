@@ -1,41 +1,78 @@
 package mig
 
 import (
-	"log"
 	"os/exec"
 	"strings"
 	"testing"
 
+	_ "github.com/go-sql-driver/mysql"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
 )
 
-//todo: also test with mysql
+//todo: move away from sqlx. shouldn't need the dependancy
+
+/*mysql:
+  create user 'testuser'@'localhost' identified by 'testpassword';
+	grant all privileges on testdb . * to 'testuser'@'localhost';
+*/
+
+/*postgres:
+  create user testuser;
+	alter user testuser password 'testpassword'
+*/
 
 func Test(t *testing.T) {
-	exec.Command("dropdb", "testPostgres").Run()
-	output, err := exec.Command("createdb", "testPostgres").CombinedOutput()
-	defer exec.Command("dropdb", "testPostgres").Run()
+	//create the postgres table (todo: this should be done as the testuser)
+	exec.Command("dropdb", "testdb").Run()
+	output, err := exec.Command("createdb", "testdb").CombinedOutput()
+	defer exec.Command("dropdb", "testdb").Run()
 	if err != nil {
-		log.Printf("couldn't create postgres db: %v, %s\n", err, output)
+		t.Fatalf("couldn't create postgres db: %v, %s\n", err, output)
 	}
 
-	pg, err := sqlx.Connect("postgres", "postgres://testuser:testpassword@localhost/testPostgres")
+	//create the mysql database
+	mysqlTestDB := func(command string, input ...string) ([]byte, error) {
+		cmd := exec.Command("mysqladmin", "-u", "testuser", command, "testdb")
+		//passing passwords as command-line args in mysqladmin is broken: A space makes it prompt.
+		cmd.Env = []string{"MYSQL_PWD=testpassword"}
+		cmd.Stdin = strings.NewReader(strings.Join(input, " "))
+		return cmd.CombinedOutput()
+	}
+	mysqlTestDB("drop", "yes")
+	output, err = mysqlTestDB("create")
+	if err != nil {
+		t.Fatalf("couldn't create mysql db: %v, %s\n", err, string(output))
+	}
+	defer mysqlTestDB("drop", "yes")
+
+	pg, err := sqlx.Connect("postgres", "postgres://testuser:testpassword@localhost/testdb")
 	if err != nil {
 		t.Fatalf("couldn't connect to postgres test db: %v\n", err)
 	}
 
+	mysql, err := sqlx.Connect("mysql", "testuser:testpassword@/testdb")
+	if err != nil {
+		t.Fatalf("couldn't connect to mysql test db: %v\n", err)
+	}
+
 	t.Run("revert", func(t *testing.T) {
 		testRevert(t, pg)
+		testRevert(t, mysql)
 	})
 
 	t.Run("prereq", func(t *testing.T) {
 		testPrereq(t, pg)
+		testPrereq(t, mysql)
 	})
 
 	t.Run("whitespace", func(t *testing.T) {
 		testWhitespace(t, pg)
+		testWhitespace(t, mysql)
 	})
+
+	_ = mysql
+
 }
 
 func testRevert(t *testing.T, db *sqlx.DB) {
@@ -52,9 +89,9 @@ func testRevert(t *testing.T, db *sqlx.DB) {
 			`,
 			Revert: `drop table test_user`,
 		},
-	}, "TestRevert-1")
+	}, "TestRevert-1-"+db.DriverName())
 
-	err := Run(db, "TestRevert-1")
+	err := Run(db, "TestRevert-1-"+db.DriverName())
 	if err != nil {
 		t.Fatalf(": %v\n", err)
 	}
@@ -91,8 +128,8 @@ func testRevert(t *testing.T, db *sqlx.DB) {
 				)
 			`,
 		},
-	}, "TestRevert-2")
-	err = Run(db, "TestRevert-2")
+	}, "TestRevert-2-"+db.DriverName())
+	err = Run(db, "TestRevert-2-"+db.DriverName())
 	if err != nil {
 		t.Fatalf(": %v\n", err)
 	}
@@ -130,20 +167,20 @@ func testPrereq(t *testing.T, db *sqlx.DB) {
 			  select 1 from test_prereq
 			`,
 			Migrate: `
-			  alter table test_prereq add column food text
+			  alter table test_prereq add column food varchar(20)
 			`,
 		},
-	}, "TestPrereq")
+	}, "TestPrereq-"+db.DriverName())
 
 	Register([]Step{
 		{
 			Migrate: `
-			  create table test_prereq()
+			  create table test_prereq(dummy int)
 			`,
 		},
-	}, "TestPrereq")
+	}, "TestPrereq-"+db.DriverName())
 
-	err := Run(db, "TestPrereq")
+	err := Run(db, "TestPrereq-"+db.DriverName())
 	if err != nil {
 		t.Fatalf("couldn't run migrations: %v\n", err)
 	}
@@ -156,7 +193,7 @@ func testPrereq(t *testing.T, db *sqlx.DB) {
 	var result []struct {
 		Food string
 	}
-	err = db.Select(&result, "select * from test_prereq")
+	err = db.Select(&result, "select food from test_prereq")
 	if err != nil {
 		t.Fatalf(": %v\n", err)
 	}
@@ -177,9 +214,9 @@ func testWhitespace(t *testing.T, db *sqlx.DB) {
 				)
 			`,
 		},
-	}, "TestWhitespace-1")
+	}, "TestWhitespace-1-"+db.DriverName())
 
-	err := Run(db, "TestWhitespace-1")
+	err := Run(db, "TestWhitespace-1-"+db.DriverName())
 	if err != nil {
 		t.Fatalf(": %v\n", err)
 	}
@@ -200,9 +237,9 @@ func testWhitespace(t *testing.T, db *sqlx.DB) {
 				")",
 			}, "\n"),
 		},
-	}, "TestWhitespace-2")
+	}, "TestWhitespace-2-"+db.DriverName())
 
-	err = Run(db, "TestWhitespace-2")
+	err = Run(db, "TestWhitespace-2-"+db.DriverName())
 	if err != nil {
 		t.Fatalf(": %v\n", err)
 	}

@@ -53,7 +53,7 @@ func Run(db *sqlx.DB, tags ...string) error {
 func run(db *sqlx.DB, steps [][]Step) error {
 	err := checkMigrationTable(db)
 	if err != nil {
-		return err
+		return fmt.Errorf("couldn't create migration table: %v", err)
 	}
 
 	// copy so that the operations are not mutating
@@ -62,7 +62,7 @@ func run(db *sqlx.DB, steps [][]Step) error {
 
 	recorded, err := fetchCompletedSteps(db)
 	if err != nil {
-		return err
+		return fmt.Errorf("couldn't fetch previous migrations: %v", err)
 	}
 
 	for i, set := range sets {
@@ -71,7 +71,7 @@ func run(db *sqlx.DB, steps [][]Step) error {
 
 	err = doRecordedReverts(db, recorded)
 	if err != nil {
-		return err
+		return fmt.Errorf("couldn't perform recorded reverts: %v", err)
 	}
 
 	return runSteps(db, sets)
@@ -129,20 +129,25 @@ func skipCompletedSteps(steps []Step, recorded map[string]string) []Step {
 }
 
 func doRecordedReverts(db *sqlx.DB, reverts map[string]string) error {
-	// do the rewind process
 	// TODO: do this in reverse chronology!
-	for hash, down := range reverts {
-		_, err := db.Exec(`
+	for hash, revert := range reverts {
+		stmt := fmt.Sprintf(`
 			DELETE from migration
-			WHERE  hash = $1
-		`, hash)
+			WHERE  hash = %s
+		`, arg(db, 1))
+		_, err := db.Exec(stmt, hash)
 		if err != nil {
-			return err
+			return fmt.Errorf("coudln't delete from migration table (hash '%s'): %v", hash, err)
 		}
 
-		_, err = db.Exec(down)
+		//nothing to do if the revert is the empty string
+		if revert == "" {
+			continue
+		}
+
+		_, err = db.Exec(revert)
 		if err != nil {
-			return err
+			return fmt.Errorf("coudln't execute recorded revert '%s': %v", revert, err)
 		}
 	}
 
@@ -174,22 +179,27 @@ func tryProgressOnSet(db *sqlx.DB, steps []Step) ([]Step, bool, error) {
 
 		if err != nil {
 			tx.Rollback()
-			return nil, false, err
+			return nil, false, fmt.Errorf(
+				"couldn't execute migration '%s': %v",
+				step.Migrate, err,
+			)
 		}
 
-		_, err = tx.Exec(`
-			INSERT into migration (hash, down)
-			VALUES ($1, $2);
-		`, step.hash, step.Revert)
-
+		stmt := fmt.Sprintf(`
+			INSERT into migration (hash, revert)
+			VALUES (%s, %s);
+		`, arg(db, 1), arg(db, 2))
+		_, err = tx.Exec(stmt, step.hash, step.Revert)
 		if err != nil {
 			tx.Rollback()
-			return nil, false, err
+			return nil, false, fmt.Errorf(
+				"internal mig error (couldn't insert into migration table): %v", err,
+			)
 		}
 
 		err = tx.Commit()
 		if err != nil {
-			return nil, false, err
+			return nil, false, fmt.Errorf("couldn't commit transaction: %v", err)
 		}
 
 		progress = true
@@ -199,16 +209,17 @@ func tryProgressOnSet(db *sqlx.DB, steps []Step) ([]Step, bool, error) {
 }
 
 func checkMigrationTable(db *sqlx.DB) error {
-	_, err := db.Query(`select 1 from migration;`)
+	_, err := db.Query(`select 1 from migration`)
 	if err == nil {
 		return nil //it already exists
 	}
 
 	//TODO: timestamps and other audit trails
+	//TODO: pick a better name for the table
 	_, err = db.Exec(`
 		CREATE TABLE migration (
 			hash TEXT,
-			down TEXT
+			revert TEXT
 		)
 	`)
 
@@ -218,7 +229,7 @@ func checkMigrationTable(db *sqlx.DB) error {
 func fetchCompletedSteps(db *sqlx.DB) (map[string]string, error) {
 	//collect the recored migrations
 	rows, err := db.Query(`
-		SELECT hash, down
+		SELECT hash, revert
 		FROM   migration
 	`)
 	if err != nil {
@@ -227,9 +238,9 @@ func fetchCompletedSteps(db *sqlx.DB) (map[string]string, error) {
 
 	recorded := map[string]string{}
 	for rows.Next() {
-		var hash, down string
-		rows.Scan(&hash, &down)
-		recorded[hash] = down
+		var hash, revert string
+		rows.Scan(&hash, &revert)
+		recorded[hash] = revert
 	}
 
 	if err := rows.Err(); err != nil {
@@ -237,4 +248,15 @@ func fetchCompletedSteps(db *sqlx.DB) (map[string]string, error) {
 	}
 
 	return recorded, nil
+}
+
+func arg(db *sqlx.DB, n int) string {
+	switch driver := db.DriverName(); driver {
+	case "mysql":
+		return "?"
+	case "postgres":
+		return fmt.Sprintf("$%d", n)
+	default:
+		panic(fmt.Sprintf("mig doesn't support db connections with driver '%s'", driver))
+	}
 }
