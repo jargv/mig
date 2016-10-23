@@ -1,8 +1,6 @@
 package mig
 
 import (
-	"crypto/md5"
-	"encoding/base64"
 	"fmt"
 
 	"github.com/jmoiron/sqlx"
@@ -11,17 +9,15 @@ import (
 var registeredMigrationSets [][]Step
 var taggedMigrationSets map[string][][]Step
 
-// Step represents a single step in a migration
-type Step struct {
-	Migrate string
-	Revert  string
-	Prereq  string
-}
-
 // Register queues a MigrationSet to be exectued when mig.Run(...) is called
-func Register(steps []Step, tags ...string) {
-	//copy to avoid refernce issues
-	steps = append([]Step{}, steps...)
+func Register(steps_in []Step, tags ...string) {
+	// deep copy to avoid reference issue
+	steps := make([]Step, len(steps_in))
+	for i, step := range steps_in {
+		step.cleanWhitespace()
+		step.computeHash()
+		steps[i] = step
+	}
 
 	if len(tags) == 0 {
 		registeredMigrationSets = append(registeredMigrationSets, steps)
@@ -121,7 +117,7 @@ func runSteps(db *sqlx.DB, sets [][]Step) error {
 
 func skipCompletedSteps(steps []Step, recorded map[string]string) []Step {
 	for len(steps) > 0 {
-		hash := createHash(steps[0].Migrate)
+		hash := steps[0].hash
 		if _, ok := recorded[hash]; !ok {
 			break //we've found the migration to start at. Everything else must be redone.
 		}
@@ -181,12 +177,10 @@ func tryProgressOnSet(db *sqlx.DB, steps []Step) ([]Step, bool, error) {
 			return nil, false, err
 		}
 
-		hash := createHash(step.Migrate)
-
 		_, err = tx.Exec(`
 			INSERT into migration (hash, down)
 			VALUES ($1, $2);
-		`, hash, step.Revert)
+		`, step.hash, step.Revert)
 
 		if err != nil {
 			tx.Rollback()
@@ -202,13 +196,6 @@ func tryProgressOnSet(db *sqlx.DB, steps []Step) ([]Step, bool, error) {
 	}
 
 	return steps, progress, nil
-}
-
-func createHash(str string) string {
-	//TODO: remove empty lines and leading whitespace to make this a bit more robust
-	sum := md5.Sum([]byte(str))
-	b64 := base64.StdEncoding.EncodeToString(sum[:])
-	return string(b64[:])
 }
 
 func checkMigrationTable(db *sqlx.DB) error {
@@ -231,8 +218,8 @@ func checkMigrationTable(db *sqlx.DB) error {
 func fetchCompletedSteps(db *sqlx.DB) (map[string]string, error) {
 	//collect the recored migrations
 	rows, err := db.Query(`
-	SELECT hash, down
-	FROM   migration
+		SELECT hash, down
+		FROM   migration
 	`)
 	if err != nil {
 		return nil, err

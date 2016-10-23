@@ -3,6 +3,7 @@ package mig
 import (
 	"log"
 	"os/exec"
+	"strings"
 	"testing"
 
 	"github.com/jmoiron/sqlx"
@@ -11,7 +12,6 @@ import (
 
 //todo: also test with mysql
 //todo: consider factoring into subtests and reusing the same connection
-//todo: handle whitespace and comments
 
 func getConnection(t *testing.T) *sqlx.DB {
 	exec.Command("dropdb", "testPostgres").Run()
@@ -156,5 +156,61 @@ func TestPrereq(t *testing.T) {
 
 	if len(result) != 2 {
 		t.Fatalf(`len(result) != 2, len(result) == "%v"`, len(result))
+	}
+}
+
+func TestWhitespace(t *testing.T) {
+	db := getConnection(t)
+	Register([]Step{
+		{
+			Revert: `drop table test_whitespace`,
+			Migrate: `
+			  --comments shouldn't affect things...
+				create table test_whitespace(
+					survive int
+				)
+			`,
+		},
+	}, "TestWhitespace-1")
+
+	err := Run(db, "TestWhitespace-1")
+	if err != nil {
+		t.Fatalf(": %v\n", err)
+	}
+
+	//insert a value which is expected to survive the migration below
+	_, err = db.Exec("insert into test_whitespace values (42)")
+	if err != nil {
+		t.Fatalf("couldn't insert: %v\n", err)
+	}
+
+	//this is the same migration, except for whitespace differences
+	Register([]Step{
+		{
+			Revert: `drop table test_whitespace`,
+			Migrate: strings.Join([]string{
+				"create table test_whitespace(",
+				"survive int",
+				")",
+			}, "\n"),
+		},
+	}, "TestWhitespace-2")
+
+	err = Run(db, "TestWhitespace-2")
+	if err != nil {
+		t.Fatalf(": %v\n", err)
+	}
+
+	//check if the value survived as expected
+	var result struct {
+		Survive int
+	}
+	err = db.Get(&result, "select * from test_whitespace")
+	if err != nil {
+		t.Fatalf("couldn't select: %v\n", err)
+	}
+
+	if result.Survive != 42 {
+		t.Fatalf(`result.Survive != 42, result.Survive == "%v"`, result.Survive)
 	}
 }
