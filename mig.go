@@ -5,6 +5,14 @@ import (
 	"fmt"
 )
 
+// TODO: better readme, docs
+// TODO: build tag for mig_forward_only
+// TODO: consider a method for creating a new baseline. For example, keep
+//       the data in an existing installment, but pretend like it's
+//       migrations came from the new refactored versions of the migrations.
+
+// DB is an interface that allows you to use the standard *sql.DB or a *sqlx.DB
+// (or any other connection that implements the interface!)
 type DB interface {
 	Exec(query string, args ...interface{}) (sql.Result, error)
 	Begin() (*sql.Tx, error)
@@ -138,12 +146,12 @@ func doRecordedReverts(db DB, reverts map[string]string) error {
 	// TODO: do this in reverse chronology!
 	for hash, revert := range reverts {
 		stmt := fmt.Sprintf(`
-			DELETE from migration
+			DELETE from MIG_RECORDED_MIGRATIONS
 			WHERE  hash = %s
 		`, arg(db, 1))
 		_, err := db.Exec(stmt, hash)
 		if err != nil {
-			return fmt.Errorf("coudln't delete from migration table (hash '%s'): %v", hash, err)
+			return fmt.Errorf("coudln't delete from MIG_RECORDED_MIGRATIONS table (hash '%s'): %v", hash, err)
 		}
 
 		//nothing to do if the revert is the empty string
@@ -192,14 +200,14 @@ func tryProgressOnSet(db DB, steps []Step) ([]Step, bool, error) {
 		}
 
 		stmt := fmt.Sprintf(`
-			INSERT into migration (hash, revert)
+			INSERT into MIG_RECORDED_MIGRATIONS (hash, revert)
 			VALUES (%s, %s);
 		`, arg(db, 1), arg(db, 2))
 		_, err = tx.Exec(stmt, step.hash, step.Revert)
 		if err != nil {
 			tx.Rollback()
 			return nil, false, fmt.Errorf(
-				"internal mig error (couldn't insert into migration table): %v", err,
+				"internal mig error (couldn't insert into MIG_RECORDED_MIGRATIONS table): %v", err,
 			)
 		}
 
@@ -215,15 +223,14 @@ func tryProgressOnSet(db DB, steps []Step) ([]Step, bool, error) {
 }
 
 func checkMigrationTable(db DB) error {
-	_, err := db.Query(`select 1 from migration`)
+	_, err := db.Query(`select 1 from MIG_RECORDED_MIGRATIONS`)
 	if err == nil {
 		return nil //it already exists
 	}
 
 	//TODO: timestamps and other audit trails
-	//TODO: pick a better name for the table
 	_, err = db.Exec(`
-		CREATE TABLE migration (
+		CREATE TABLE MIG_RECORDED_MIGRATIONS (
 			hash TEXT,
 			revert TEXT
 		)
@@ -236,7 +243,7 @@ func fetchCompletedSteps(db DB) (map[string]string, error) {
 	//collect the recored migrations
 	rows, err := db.Query(`
 		SELECT hash, revert
-		FROM   migration
+		FROM   MIG_RECORDED_MIGRATIONS
 	`)
 	if err != nil {
 		return nil, err
