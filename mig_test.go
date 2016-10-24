@@ -10,8 +10,6 @@ import (
 	_ "github.com/lib/pq"
 )
 
-//todo: move away from sqlx. shouldn't need the dependancy
-
 /*mysql:
   create user 'testuser'@'localhost' identified by 'testpassword';
 	grant all privileges on testdb . * to 'testuser'@'localhost';

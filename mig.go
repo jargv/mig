@@ -1,10 +1,16 @@
 package mig
 
 import (
+	"database/sql"
 	"fmt"
-
-	"github.com/jmoiron/sqlx"
 )
+
+type DB interface {
+	Exec(query string, args ...interface{}) (sql.Result, error)
+	Begin() (*sql.Tx, error)
+	Query(query string, args ...interface{}) (*sql.Rows, error)
+	DriverName() string
+}
 
 var registeredMigrationSets [][]Step
 var taggedMigrationSets map[string][][]Step
@@ -35,7 +41,7 @@ func Register(steps_in []Step, tags ...string) {
 
 // Run executes the migration Steps which have been registered by `mig.Register`
 // on the given database connection
-func Run(db *sqlx.DB, tags ...string) error {
+func Run(db DB, tags ...string) error {
 	if len(tags) == 0 {
 		return run(db, registeredMigrationSets)
 	}
@@ -50,7 +56,7 @@ func Run(db *sqlx.DB, tags ...string) error {
 	return nil
 }
 
-func run(db *sqlx.DB, steps [][]Step) error {
+func run(db DB, steps [][]Step) error {
 	err := checkMigrationTable(db)
 	if err != nil {
 		return fmt.Errorf("couldn't create migration table: %v", err)
@@ -77,7 +83,7 @@ func run(db *sqlx.DB, steps [][]Step) error {
 	return runSteps(db, sets)
 }
 
-func runSteps(db *sqlx.DB, sets [][]Step) error {
+func runSteps(db DB, sets [][]Step) error {
 	mostRecentProgress := -1
 
 	//run the migration sets
@@ -128,7 +134,7 @@ func skipCompletedSteps(steps []Step, recorded map[string]string) []Step {
 	return steps
 }
 
-func doRecordedReverts(db *sqlx.DB, reverts map[string]string) error {
+func doRecordedReverts(db DB, reverts map[string]string) error {
 	// TODO: do this in reverse chronology!
 	for hash, revert := range reverts {
 		stmt := fmt.Sprintf(`
@@ -154,7 +160,7 @@ func doRecordedReverts(db *sqlx.DB, reverts map[string]string) error {
 	return nil
 }
 
-func tryProgressOnSet(db *sqlx.DB, steps []Step) ([]Step, bool, error) {
+func tryProgressOnSet(db DB, steps []Step) ([]Step, bool, error) {
 	progress := false
 
 	for len(steps) > 0 {
@@ -208,7 +214,7 @@ func tryProgressOnSet(db *sqlx.DB, steps []Step) ([]Step, bool, error) {
 	return steps, progress, nil
 }
 
-func checkMigrationTable(db *sqlx.DB) error {
+func checkMigrationTable(db DB) error {
 	_, err := db.Query(`select 1 from migration`)
 	if err == nil {
 		return nil //it already exists
@@ -226,7 +232,7 @@ func checkMigrationTable(db *sqlx.DB) error {
 	return err
 }
 
-func fetchCompletedSteps(db *sqlx.DB) (map[string]string, error) {
+func fetchCompletedSteps(db DB) (map[string]string, error) {
 	//collect the recored migrations
 	rows, err := db.Query(`
 		SELECT hash, revert
@@ -250,7 +256,7 @@ func fetchCompletedSteps(db *sqlx.DB) (map[string]string, error) {
 	return recorded, nil
 }
 
-func arg(db *sqlx.DB, n int) string {
+func arg(db DB, n int) string {
 	switch driver := db.DriverName(); driver {
 	case "mysql":
 		return "?"
