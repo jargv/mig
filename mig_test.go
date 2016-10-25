@@ -11,6 +11,7 @@ import (
 )
 
 /*mysql:
+  requires mysqladmin
   create user 'testuser'@'localhost' identified by 'testpassword';
 	grant all privileges on testdb . * to 'testuser'@'localhost';
 */

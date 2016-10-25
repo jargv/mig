@@ -5,6 +5,8 @@ import (
 	"fmt"
 )
 
+// TODO: timestamps, tag, filename, and other audit trails
+// TODO: support for logging
 // TODO: better readme, docs
 // TODO: build tag for mig_forward_only
 // TODO: consider a method for creating a new baseline. For example, keep
@@ -51,11 +53,11 @@ func Register(steps_in []Step, tags ...string) {
 // on the given database connection
 func Run(db DB, tags ...string) error {
 	if len(tags) == 0 {
-		return run(db, registeredMigrationSets)
+		return run(db, "", registeredMigrationSets)
 	}
 
 	for _, tag := range tags {
-		err := run(db, taggedMigrationSets[tag])
+		err := run(db, tag, taggedMigrationSets[tag])
 		if err != nil {
 			return err
 		}
@@ -64,7 +66,7 @@ func Run(db DB, tags ...string) error {
 	return nil
 }
 
-func run(db DB, steps [][]Step) error {
+func run(db DB, tag string, steps [][]Step) error {
 	err := checkMigrationTable(db)
 	if err != nil {
 		return fmt.Errorf("couldn't create migration table: %v", err)
@@ -74,7 +76,7 @@ func run(db DB, steps [][]Step) error {
 	sets := make([][]Step, len(steps))
 	copy(sets, steps)
 
-	recorded, err := fetchCompletedSteps(db)
+	recorded, err := fetchCompletedSteps(db, tag)
 	if err != nil {
 		return fmt.Errorf("couldn't fetch previous migrations: %v", err)
 	}
@@ -83,46 +85,47 @@ func run(db DB, steps [][]Step) error {
 		sets[i] = skipCompletedSteps(set, recorded)
 	}
 
-	err = doRecordedReverts(db, recorded)
+	err = doRecordedReverts(db, tag, recorded)
 	if err != nil {
 		return fmt.Errorf("couldn't perform recorded reverts: %v", err)
 	}
 
-	return runSteps(db, sets)
+	return runSteps(db, tag, sets)
 }
 
-func runSteps(db DB, sets [][]Step) error {
-	mostRecentProgress := -1
-
+func runSteps(db DB, tag string, sets [][]Step) error {
 	//run the migration sets
 	for {
-		retry := false
+		morePending := false
+		progressMade := false
+
 		for i, set := range sets {
-			newSet, progressMade, err := tryProgressOnSet(db, set)
+			newSet, currentSetProgressed, err := tryProgressOnSet(db, tag, set)
 			if err != nil {
 				return err
 			}
 
-			// track the most recent progress to detect an infinite loop
-			if progressMade {
-				mostRecentProgress = i
-			} else if mostRecentProgress == i && len(newSet) > 0 {
-				// if the most recent progress was from this set,
-				// but we didn't make progress this time,
-				// we must be caught in a loop. Fail
-				return fmt.Errorf("Unable to make progress on migration steps: %v", sets)
+			// track if any progress is made
+			if currentSetProgressed {
+				progressMade = true
 			}
 
-			// if this set isn't done, we'll have to continue at least one more iteration
+			// track if more work is pending
 			if len(newSet) > 0 {
-				retry = true
+				morePending = true
 			}
 
 			sets[i] = newSet
 		}
 
-		if !retry {
+		//if there isn't any more work, we're done!
+		if !morePending {
 			break
+		}
+
+		//if no progress was made, we're in an infinite loop
+		if !progressMade {
+			return fmt.Errorf("Unable to make progress on migration steps: %#v", sets)
 		}
 	}
 
@@ -142,13 +145,15 @@ func skipCompletedSteps(steps []Step, recorded map[string]string) []Step {
 	return steps
 }
 
-func doRecordedReverts(db DB, reverts map[string]string) error {
+func doRecordedReverts(db DB, tag string, reverts map[string]string) error {
 	// TODO: do this in reverse chronology!
+	// TODO: make this transactional
 	for hash, revert := range reverts {
 		stmt := fmt.Sprintf(`
 			DELETE from MIG_RECORDED_MIGRATIONS
 			WHERE  hash = %s
-		`, arg(db, 1))
+			AND    tag  = %s
+		`, arg(db, 1), arg(db, 2))
 		_, err := db.Exec(stmt, hash)
 		if err != nil {
 			return fmt.Errorf("coudln't delete from MIG_RECORDED_MIGRATIONS table (hash '%s'): %v", hash, err)
@@ -168,7 +173,7 @@ func doRecordedReverts(db DB, reverts map[string]string) error {
 	return nil
 }
 
-func tryProgressOnSet(db DB, steps []Step) ([]Step, bool, error) {
+func tryProgressOnSet(db DB, tag string, steps []Step) ([]Step, bool, error) {
 	progress := false
 
 	for len(steps) > 0 {
@@ -200,10 +205,10 @@ func tryProgressOnSet(db DB, steps []Step) ([]Step, bool, error) {
 		}
 
 		stmt := fmt.Sprintf(`
-			INSERT into MIG_RECORDED_MIGRATIONS (hash, revert)
-			VALUES (%s, %s);
-		`, arg(db, 1), arg(db, 2))
-		_, err = tx.Exec(stmt, step.hash, step.Revert)
+			INSERT into MIG_RECORDED_MIGRATIONS (hash, tag, revert)
+			VALUES (%s, %s, %s);
+		`, arg(db, 1), arg(db, 2), arg(db, 3))
+		_, err = tx.Exec(stmt, step.hash, tag, step.Revert)
 		if err != nil {
 			tx.Rollback()
 			return nil, false, fmt.Errorf(
@@ -228,10 +233,10 @@ func checkMigrationTable(db DB) error {
 		return nil //it already exists
 	}
 
-	//TODO: timestamps and other audit trails
 	_, err = db.Exec(`
 		CREATE TABLE MIG_RECORDED_MIGRATIONS (
-			hash TEXT,
+			hash   TEXT,
+			tag    TEXT,
 			revert TEXT
 		)
 	`)
@@ -239,12 +244,14 @@ func checkMigrationTable(db DB) error {
 	return err
 }
 
-func fetchCompletedSteps(db DB) (map[string]string, error) {
+func fetchCompletedSteps(db DB, tag string) (map[string]string, error) {
 	//collect the recored migrations
-	rows, err := db.Query(`
+	stmt := fmt.Sprintf(`
 		SELECT hash, revert
 		FROM   MIG_RECORDED_MIGRATIONS
-	`)
+		WHERE  tag = %s
+	`, arg(db, 1))
+	rows, err := db.Query(stmt, tag)
 	if err != nil {
 		return nil, err
 	}
