@@ -88,9 +88,9 @@ func testRevert(t *testing.T, db *sqlx.DB) {
 			`,
 			Revert: `drop table test_user`,
 		},
-	}, "TestRevert-1-"+db.DriverName())
+	}, "TestRevert-"+db.DriverName())
 
-	err := Run(db, "TestRevert-1-"+db.DriverName())
+	err := Run(db, "TestRevert-"+db.DriverName())
 	if err != nil {
 		t.Fatalf(": %v\n", err)
 	}
@@ -115,6 +115,9 @@ func testRevert(t *testing.T, db *sqlx.DB) {
 		t.Fatalf(`len(result) != 2, len(result) == "%v"`, len(result1))
 	}
 
+	//reset the migration set
+	delete(taggedMigrationSets, "TestRevert-"+db.DriverName())
+
 	Register([]Step{
 		{
 			Migrate: `create table survive(val int)`,
@@ -127,8 +130,8 @@ func testRevert(t *testing.T, db *sqlx.DB) {
 				)
 			`,
 		},
-	}, "TestRevert-2-"+db.DriverName())
-	err = Run(db, "TestRevert-2-"+db.DriverName())
+	}, "TestRevert-"+db.DriverName())
+	err = Run(db, "TestRevert-"+db.DriverName())
 	if err != nil {
 		t.Fatalf(": %v\n", err)
 	}
@@ -203,6 +206,8 @@ func testPrereq(t *testing.T, db *sqlx.DB) {
 }
 
 func testWhitespace(t *testing.T, db *sqlx.DB) {
+	tagname := "TestWhitespace-" + db.DriverName()
+
 	Register([]Step{
 		{
 			Revert: `drop table test_whitespace`,
@@ -213,9 +218,9 @@ func testWhitespace(t *testing.T, db *sqlx.DB) {
 				)
 			`,
 		},
-	}, "TestWhitespace-1-"+db.DriverName())
+	}, tagname)
 
-	err := Run(db, "TestWhitespace-1-"+db.DriverName())
+	err := Run(db, tagname)
 	if err != nil {
 		t.Fatalf(": %v\n", err)
 	}
@@ -225,6 +230,8 @@ func testWhitespace(t *testing.T, db *sqlx.DB) {
 	if err != nil {
 		t.Fatalf("couldn't insert: %v\n", err)
 	}
+
+	delete(taggedMigrationSets, tagname)
 
 	//this is the same migration, except for whitespace differences
 	Register([]Step{
@@ -236,9 +243,9 @@ func testWhitespace(t *testing.T, db *sqlx.DB) {
 				")",
 			}, "\n"),
 		},
-	}, "TestWhitespace-2-"+db.DriverName())
+	}, tagname)
 
-	err = Run(db, "TestWhitespace-2-"+db.DriverName())
+	err = Run(db, tagname)
 	if err != nil {
 		t.Fatalf(": %v\n", err)
 	}

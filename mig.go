@@ -154,7 +154,7 @@ func doRecordedReverts(db DB, tag string, reverts map[string]string) error {
 			WHERE  hash = %s
 			AND    tag  = %s
 		`, arg(db, 1), arg(db, 2))
-		_, err := db.Exec(stmt, hash)
+		_, err := db.Exec(stmt, hash, tag)
 		if err != nil {
 			return fmt.Errorf("coudln't delete from MIG_RECORDED_MIGRATIONS table (hash '%s'): %v", hash, err)
 		}
