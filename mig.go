@@ -3,9 +3,10 @@ package mig
 import (
 	"database/sql"
 	"fmt"
+	"runtime"
+	"time"
 )
 
-// TODO: timestamps, tag, filename, and other audit trails
 // TODO: support for logging
 // TODO: better readme, docs
 // TODO: build tag for mig_forward_only
@@ -27,11 +28,21 @@ var taggedMigrationSets map[string][][]Step
 
 // Register queues a MigrationSet to be exectued when mig.Run(...) is called
 func Register(steps_in []Step, tags ...string) {
+	// get the file name of the calling function
+	_, filename, _, ok := runtime.Caller(1)
+	if !ok {
+		filename = "<filename not available>"
+	}
+
 	// deep copy to avoid reference issue
 	steps := make([]Step, len(steps_in))
 	for i, step := range steps_in {
 		step.cleanWhitespace()
 		step.computeHash()
+		step.file = filename
+		if step.Name == "" {
+			step.Name = fmt.Sprintf("unnamed-%d", i)
+		}
 		steps[i] = step
 	}
 
@@ -199,16 +210,19 @@ func tryProgressOnSet(db DB, tag string, steps []Step) ([]Step, bool, error) {
 		if err != nil {
 			tx.Rollback()
 			return nil, false, fmt.Errorf(
-				"couldn't execute migration '%s': %v",
-				step.Migrate, err,
+				"couldn't execute migration '%s': %v\n"+
+					"file: %s\n"+
+					"sql: `%s`",
+				step.Name, err, step.file, step.Migrate,
 			)
 		}
 
+		now := time.Now()
 		stmt := fmt.Sprintf(`
-			INSERT into MIG_RECORDED_MIGRATIONS (hash, tag, revert)
-			VALUES (%s, %s, %s);
-		`, arg(db, 1), arg(db, 2), arg(db, 3))
-		_, err = tx.Exec(stmt, step.hash, tag, step.Revert)
+			INSERT into MIG_RECORDED_MIGRATIONS (name, file, hash, tag, revert, time)
+			VALUES (%s, %s, %s, %s, %s, %s);
+		`, arg(db, 1), arg(db, 2), arg(db, 3), arg(db, 4), arg(db, 5), arg(db, 6))
+		_, err = tx.Exec(stmt, step.Name, step.file, step.hash, tag, step.Revert, now)
 		if err != nil {
 			tx.Rollback()
 			return nil, false, fmt.Errorf(
@@ -235,8 +249,11 @@ func checkMigrationTable(db DB) error {
 
 	_, err = db.Exec(`
 		CREATE TABLE MIG_RECORDED_MIGRATIONS (
-			hash   TEXT,
+			name   TEXT,
+			file   TEXT,
 			tag    TEXT,
+			time   TIMESTAMP,
+			hash   TEXT,
 			revert TEXT
 		)
 	`)

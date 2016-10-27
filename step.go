@@ -8,10 +8,12 @@ import (
 
 // Step represents a single step in a migration
 type Step struct {
+	Name    string
 	Migrate string
 	Revert  string
 	Prereq  string
 	hash    string
+	file    string
 }
 
 func (s *Step) cleanWhitespace() {
