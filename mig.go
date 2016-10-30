@@ -23,11 +23,10 @@ type DB interface {
 	DriverName() string
 }
 
-var registeredMigrationSets [][]Step
-var taggedMigrationSets map[string][][]Step
+var registeredMigrations map[string][][]Step
 
 // Register queues a MigrationSet to be exectued when mig.Run(...) is called
-func Register(steps_in []Step, tags ...string) {
+func Register(tag string, steps_in []Step) {
 	// get the file name of the calling function
 	_, filename, _, ok := runtime.Caller(1)
 	if !ok {
@@ -46,29 +45,18 @@ func Register(steps_in []Step, tags ...string) {
 		steps[i] = step
 	}
 
-	if len(tags) == 0 {
-		registeredMigrationSets = append(registeredMigrationSets, steps)
-		return
+	if registeredMigrations == nil {
+		registeredMigrations = make(map[string][][]Step)
 	}
 
-	if taggedMigrationSets == nil {
-		taggedMigrationSets = make(map[string][][]Step)
-	}
-
-	for _, tag := range tags {
-		taggedMigrationSets[tag] = append(taggedMigrationSets[tag], steps)
-	}
+	registeredMigrations[tag] = append(registeredMigrations[tag], steps)
 }
 
 // Run executes the migration Steps which have been registered by `mig.Register`
 // on the given database connection
 func Run(db DB, tags ...string) error {
-	if len(tags) == 0 {
-		return run(db, "", registeredMigrationSets)
-	}
-
 	for _, tag := range tags {
-		err := run(db, tag, taggedMigrationSets[tag])
+		err := run(db, tag, registeredMigrations[tag])
 		if err != nil {
 			return err
 		}
@@ -161,7 +149,7 @@ func doRecordedReverts(db DB, tag string, reverts map[string]string) error {
 	// TODO: make this transactional
 	for hash, revert := range reverts {
 		stmt := fmt.Sprintf(`
-			DELETE from MIG_RECORDED_MIGRATIONS
+			DELETE FROM MIG_RECORDED_MIGRATIONS
 			WHERE  hash = %s
 			AND    tag  = %s
 		`, arg(db, 1), arg(db, 2))
