@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"runtime"
+	"strings"
 	"time"
 )
 
@@ -26,19 +27,26 @@ type DB interface {
 var registeredMigrations map[string][][]Step
 
 // Register queues a MigrationSet to be exectued when mig.Run(...) is called
-func Register(tag string, steps_in []Step) {
+func Register(stepsIn []Step) {
 	// get the file name of the calling function
-	_, filename, _, ok := runtime.Caller(1)
+
+	pc, filename, _, ok := runtime.Caller(1)
 	if !ok {
-		filename = "<filename not available>"
+		panic(fmt.Errorf("couldn't use runtime to collect mig.Register info"))
 	}
 
-	// deep copy to avoid reference issue
-	steps := make([]Step, len(steps_in))
-	for i, step := range steps_in {
+	//callername looks like "github.com/jargv/mig.Run"
+	callerName := runtime.FuncForPC(pc).Name()
+	parts := strings.Split(callerName, ".")
+	packagename := strings.Join(parts[:len(parts)-1], ".")
+
+	// deep copy to avoid reference issues
+	steps := make([]Step, len(stepsIn))
+	for i, step := range stepsIn {
 		step.cleanWhitespace()
 		step.computeHash()
 		step.file = filename
+		step.pkg = packagename
 		if step.Name == "" {
 			step.Name = fmt.Sprintf("unnamed-%d", i)
 		}
@@ -49,57 +57,49 @@ func Register(tag string, steps_in []Step) {
 		registeredMigrations = make(map[string][][]Step)
 	}
 
-	registeredMigrations[tag] = append(registeredMigrations[tag], steps)
+	registeredMigrations[packagename] = append(registeredMigrations[packagename], steps)
 }
 
 // Run executes the migration Steps which have been registered by `mig.Register`
 // on the given database connection
-func Run(db DB, tags ...string) error {
-	for _, tag := range tags {
-		err := run(db, tag, registeredMigrations[tag])
-		if err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-func run(db DB, tag string, steps [][]Step) error {
+func Run(db DB) error {
 	err := checkMigrationTable(db)
 	if err != nil {
-		return fmt.Errorf("couldn't create migration table: %v", err)
+		return fmt.Errorf("creating migration table: %v", err)
 	}
 
-	// copy so that the operations are not mutating
-	sets := make([][]Step, len(steps))
-	copy(sets, steps)
+	pkgs := []string{}
+	sets := [][]Step{}
+	for pkg, setsForpkg := range registeredMigrations {
+		pkgs = append(pkgs, pkg)
+		sets = append(sets, setsForpkg...)
+	}
 
-	recorded, err := fetchCompletedSteps(db, tag)
+	recorded, err := fetchCompletedSteps(db, pkgs)
 	if err != nil {
-		return fmt.Errorf("couldn't fetch previous migrations: %v", err)
+		return fmt.Errorf("fetching previous migrations: %v", err)
 	}
 
 	for i, set := range sets {
 		sets[i] = skipCompletedSteps(set, recorded)
 	}
 
-	err = doRecordedReverts(db, tag, recorded)
+	err = doRecordedReverts(db, recorded)
 	if err != nil {
-		return fmt.Errorf("couldn't perform recorded reverts: %v", err)
+		return fmt.Errorf("performing recorded reverts: %v", err)
 	}
 
-	return runSteps(db, tag, sets)
+	return runSteps(db, sets)
 }
 
-func runSteps(db DB, tag string, sets [][]Step) error {
+func runSteps(db DB, sets [][]Step) error {
 	//run the migration sets
 	for {
 		morePending := false
 		progressMade := false
 
 		for i, set := range sets {
-			newSet, currentSetProgressed, err := tryProgressOnSet(db, tag, set)
+			newSet, currentSetProgressed, err := tryProgressOnSet(db, set)
 			if err != nil {
 				return err
 			}
@@ -144,16 +144,15 @@ func skipCompletedSteps(steps []Step, recorded map[string]string) []Step {
 	return steps
 }
 
-func doRecordedReverts(db DB, tag string, reverts map[string]string) error {
+func doRecordedReverts(db DB, reverts map[string]string) error {
 	// TODO: do this in reverse chronology!
 	// TODO: make this transactional
 	for hash, revert := range reverts {
 		stmt := fmt.Sprintf(`
 			DELETE FROM MIG_RECORDED_MIGRATIONS
-			WHERE  hash = %s
-			AND    tag  = %s
-		`, arg(db, 1), arg(db, 2))
-		_, err := db.Exec(stmt, hash, tag)
+			WHERE       hash = %s
+		`, arg(db, 1))
+		_, err := db.Exec(stmt, hash)
 		if err != nil {
 			return fmt.Errorf("coudln't delete from MIG_RECORDED_MIGRATIONS table (hash '%s'): %v", hash, err)
 		}
@@ -172,7 +171,7 @@ func doRecordedReverts(db DB, tag string, reverts map[string]string) error {
 	return nil
 }
 
-func tryProgressOnSet(db DB, tag string, steps []Step) ([]Step, bool, error) {
+func tryProgressOnSet(db DB, steps []Step) ([]Step, bool, error) {
 	progress := false
 
 	for len(steps) > 0 {
@@ -196,7 +195,7 @@ func tryProgressOnSet(db DB, tag string, steps []Step) ([]Step, bool, error) {
 		_, err = tx.Exec(step.Migrate)
 
 		if err != nil {
-			tx.Rollback()
+			_ = tx.Rollback()
 			return nil, false, fmt.Errorf(
 				"couldn't execute migration '%s': %v\n"+
 					"file: %s\n"+
@@ -207,12 +206,12 @@ func tryProgressOnSet(db DB, tag string, steps []Step) ([]Step, bool, error) {
 
 		now := time.Now()
 		stmt := fmt.Sprintf(`
-			INSERT into MIG_RECORDED_MIGRATIONS (name, file, hash, tag, revert, time)
+			INSERT into MIG_RECORDED_MIGRATIONS (name, file, hash, pkg, revert, time)
 			VALUES (%s, %s, %s, %s, %s, %s);
 		`, arg(db, 1), arg(db, 2), arg(db, 3), arg(db, 4), arg(db, 5), arg(db, 6))
-		_, err = tx.Exec(stmt, step.Name, step.file, step.hash, tag, step.Revert, now)
+		_, err = tx.Exec(stmt, step.Name, step.file, step.hash, step.pkg, step.Revert, now)
 		if err != nil {
-			tx.Rollback()
+			_ = tx.Rollback()
 			return nil, false, fmt.Errorf(
 				"internal mig error (couldn't insert into MIG_RECORDED_MIGRATIONS table): %v", err,
 			)
@@ -239,7 +238,7 @@ func checkMigrationTable(db DB) error {
 		CREATE TABLE MIG_RECORDED_MIGRATIONS (
 			name   TEXT,
 			file   TEXT,
-			tag    TEXT,
+			pkg    TEXT,
 			time   TIMESTAMP,
 			hash   TEXT,
 			revert TEXT
@@ -249,14 +248,14 @@ func checkMigrationTable(db DB) error {
 	return err
 }
 
-func fetchCompletedSteps(db DB, tag string) (map[string]string, error) {
+func fetchCompletedSteps(db DB, pkgs []string) (map[string]string, error) {
 	//collect the recored migrations
 	stmt := fmt.Sprintf(`
 		SELECT hash, revert
 		FROM   MIG_RECORDED_MIGRATIONS
-		WHERE  tag = %s
-	`, arg(db, 1))
-	rows, err := db.Query(stmt, tag)
+		WHERE  pkg in (%s)
+	`, "'"+strings.Join(pkgs, "','")+"'")
+	rows, err := db.Query(stmt)
 	if err != nil {
 		return nil, err
 	}
@@ -264,7 +263,7 @@ func fetchCompletedSteps(db DB, tag string) (map[string]string, error) {
 	recorded := map[string]string{}
 	for rows.Next() {
 		var hash, revert string
-		rows.Scan(&hash, &revert)
+		_ = rows.Scan(&hash, &revert)
 		recorded[hash] = revert
 	}
 

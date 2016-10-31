@@ -23,7 +23,7 @@ import (
 
 func Test(t *testing.T) {
 	//create the postgres table (todo: this should be done as the testuser)
-	exec.Command("dropdb", "testdb").Run()
+	_ = exec.Command("dropdb", "testdb").Run()
 	output, err := exec.Command("createdb", "testdb").CombinedOutput()
 	defer exec.Command("dropdb", "testdb").Run()
 	if err != nil {
@@ -75,8 +75,8 @@ func Test(t *testing.T) {
 }
 
 func testRevert(t *testing.T, db *sqlx.DB) {
-	tagname := "TestRevert-" + db.DriverName()
-	Register(tagname, []Step{
+	registeredMigrations = nil
+	Register([]Step{
 		{
 			Migrate: `create table survive(val int)`,
 		},
@@ -91,7 +91,7 @@ func testRevert(t *testing.T, db *sqlx.DB) {
 		},
 	})
 
-	err := Run(db, tagname)
+	err := Run(db)
 	if err != nil {
 		t.Fatalf(": %v\n", err)
 	}
@@ -117,9 +117,8 @@ func testRevert(t *testing.T, db *sqlx.DB) {
 	}
 
 	//reset the migration set
-	delete(registeredMigrations, tagname)
-
-	Register(tagname, []Step{
+	registeredMigrations = nil
+	Register([]Step{
 		{
 			Migrate: `create table survive(val int)`,
 		},
@@ -132,7 +131,7 @@ func testRevert(t *testing.T, db *sqlx.DB) {
 			`,
 		},
 	})
-	err = Run(db, tagname)
+	err = Run(db)
 	if err != nil {
 		t.Fatalf(": %v\n", err)
 	}
@@ -164,8 +163,9 @@ func testRevert(t *testing.T, db *sqlx.DB) {
 }
 
 func testPrereq(t *testing.T, db *sqlx.DB) {
-	tagname := "TestPrereq-" + db.DriverName()
-	Register(tagname, []Step{
+
+	registeredMigrations = nil
+	Register([]Step{
 		{
 			Prereq: `
 			  select 1 from test_prereq
@@ -176,7 +176,7 @@ func testPrereq(t *testing.T, db *sqlx.DB) {
 		},
 	})
 
-	Register(tagname, []Step{
+	Register([]Step{
 		{
 			Migrate: `
 			  create table test_prereq(dummy int)
@@ -184,7 +184,7 @@ func testPrereq(t *testing.T, db *sqlx.DB) {
 		},
 	})
 
-	err := Run(db, tagname)
+	err := Run(db)
 	if err != nil {
 		t.Fatalf("couldn't run migrations: %v\n", err)
 	}
@@ -208,9 +208,8 @@ func testPrereq(t *testing.T, db *sqlx.DB) {
 }
 
 func testWhitespace(t *testing.T, db *sqlx.DB) {
-	tagname := "TestWhitespace-" + db.DriverName()
-
-	Register(tagname, []Step{
+	registeredMigrations = nil
+	Register([]Step{
 		{
 			Revert: `drop table test_whitespace`,
 			Migrate: `
@@ -222,7 +221,7 @@ func testWhitespace(t *testing.T, db *sqlx.DB) {
 		},
 	})
 
-	err := Run(db, tagname)
+	err := Run(db)
 	if err != nil {
 		t.Fatalf(": %v\n", err)
 	}
@@ -233,10 +232,11 @@ func testWhitespace(t *testing.T, db *sqlx.DB) {
 		t.Fatalf("couldn't insert: %v\n", err)
 	}
 
-	delete(registeredMigrations, tagname)
+	registeredMigrations = nil
 
 	//this is the same migration, except for whitespace differences
-	Register(tagname, []Step{
+	registeredMigrations = nil
+	Register([]Step{
 		{
 			Revert: `drop table test_whitespace`,
 			Migrate: strings.Join([]string{
@@ -247,7 +247,7 @@ func testWhitespace(t *testing.T, db *sqlx.DB) {
 		},
 	})
 
-	err = Run(db, tagname)
+	err = Run(db)
 	if err != nil {
 		t.Fatalf(": %v\n", err)
 	}

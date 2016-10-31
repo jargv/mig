@@ -14,6 +14,7 @@ type Step struct {
 	Prereq  string
 	hash    string
 	file    string
+	pkg     string
 }
 
 func (s *Step) cleanWhitespace() {
