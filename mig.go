@@ -30,15 +30,7 @@ var registeredMigrations map[string][][]Step
 func Register(stepsIn []Step) {
 	// get the file name of the calling function
 
-	pc, filename, _, ok := runtime.Caller(1)
-	if !ok {
-		panic(fmt.Errorf("couldn't use runtime to collect mig.Register info"))
-	}
-
-	//callername looks like "github.com/jargv/mig.Run"
-	callerName := runtime.FuncForPC(pc).Name()
-	parts := strings.Split(callerName, ".")
-	packagename := strings.Join(parts[:len(parts)-1], ".")
+	filename, packagename := callerInfo()
 
 	// deep copy to avoid reference issues
 	steps := make([]Step, len(stepsIn))
@@ -283,4 +275,24 @@ func arg(db DB, n int) string {
 	default:
 		panic(fmt.Sprintf("mig doesn't support db connections with driver '%s'", driver))
 	}
+}
+
+func callerInfo() (string, string) {
+	pc, filename, _, ok := runtime.Caller(2)
+	if !ok {
+		panic(fmt.Errorf("couldn't use runtime to collect mig.Register info"))
+	}
+
+	// callername looks like "github.com/jargv/mig.Run"
+	// unless it is a method, then it looks like "like github.com/jargv/mig.(*Type).Foo"
+	callerName := runtime.FuncForPC(pc).Name()
+	parts := strings.Split(callerName, ".")
+	nParts := len(parts)
+	var packagename string
+	if nParts > 2 && len(parts[nParts-2]) > 0 && parts[nParts-2][0] == '(' {
+		packagename = strings.Join(parts[:len(parts)-2], ".")
+	} else {
+		packagename = strings.Join(parts[:len(parts)-1], ".")
+	}
+	return filename, packagename
 }

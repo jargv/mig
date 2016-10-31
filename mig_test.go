@@ -74,7 +74,9 @@ func Test(t *testing.T) {
 
 }
 
-func testRevert(t *testing.T, db *sqlx.DB) {
+type reg struct{}
+
+func (r *reg) Register() {
 	registeredMigrations = nil
 	Register([]Step{
 		{
@@ -82,14 +84,20 @@ func testRevert(t *testing.T, db *sqlx.DB) {
 		},
 		{
 			Migrate: `
-			  create table test_user (
-					name TEXT,
-					food TEXT
-				)
+			create table test_user (
+				name TEXT,
+				food TEXT
+			)
 			`,
 			Revert: `drop table test_user`,
 		},
 	})
+}
+
+func testRevert(t *testing.T, db *sqlx.DB) {
+	var reg reg
+	//register from a method, just to test that case
+	reg.Register()
 
 	err := Run(db)
 	if err != nil {
