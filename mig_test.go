@@ -22,10 +22,10 @@ import (
 */
 
 func Test(t *testing.T) {
-	//create the postgres table (todo: this should be done as the testuser)
-	_ = exec.Command("dropdb", "testdb").Run()
-	output, err := exec.Command("createdb", "testdb").CombinedOutput()
-	defer exec.Command("dropdb", "testdb").Run()
+	//create the postgres table
+	_ = exec.Command("dropdb", "-U", "testuser", "testdb").Run()
+	output, err := exec.Command("createdb", "-U", "testuser", "testdb").CombinedOutput()
+	defer exec.Command("dropdb", "-U", "testuser", "testdb").Run()
 	if err != nil {
 		t.Fatalf("couldn't create postgres db: %v, %s\n", err, output)
 	}
@@ -45,7 +45,7 @@ func Test(t *testing.T) {
 	}
 	defer mysqlTestDB("drop", "yes")
 
-	pg, err := sqlx.Connect("postgres", "postgres://testuser:testpassword@localhost/testdb")
+	pg, err := sqlx.Connect("postgres", "postgres://testuser:testpassword@localhost/testdb?sslmode=disable")
 	if err != nil {
 		t.Fatalf("couldn't connect to postgres test db: %v\n", err)
 	}
