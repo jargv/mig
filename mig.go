@@ -67,7 +67,7 @@ func Run(db DB) error {
 		sets = append(sets, setsForpkg...)
 	}
 
-	recorded, err := fetchCompletedSteps(db, pkgs)
+	recorded, err := fetchRecordedSteps(db, pkgs)
 	if err != nil {
 		return fmt.Errorf("fetching previous migrations: %v", err)
 	}
@@ -123,7 +123,7 @@ func runSteps(db DB, sets [][]Step) error {
 	return nil
 }
 
-func skipCompletedSteps(steps []Step, recorded map[string]string) []Step {
+func skipCompletedSteps(steps []Step, recorded map[string]recordedStep) []Step {
 	for len(steps) > 0 {
 		hash := steps[0].hash
 		if _, ok := recorded[hash]; !ok {
@@ -136,27 +136,35 @@ func skipCompletedSteps(steps []Step, recorded map[string]string) []Step {
 	return steps
 }
 
-func doRecordedReverts(db DB, reverts map[string]string) error {
-	// TODO: do this in reverse chronology!
+func doRecordedReverts(db DB, reverts map[string]recordedStep) error {
 	// TODO: make this transactional
-	for hash, revert := range reverts {
+
+	orderedSteps := orderRecordedReverts(reverts)
+
+	for _, step := range orderedSteps {
 		stmt := fmt.Sprintf(`
 			DELETE FROM MIG_RECORDED_MIGRATIONS
 			WHERE       hash = %s
 		`, arg(db, 1))
-		_, err := db.Exec(stmt, hash)
+		_, err := db.Exec(stmt, step.Hash)
 		if err != nil {
-			return fmt.Errorf("coudln't delete from MIG_RECORDED_MIGRATIONS table (hash '%s'): %v", hash, err)
+			return fmt.Errorf(
+				"coudln't delete from MIG_RECORDED_MIGRATIONS table (hash '%s'): %v",
+				step.Hash, err,
+			)
 		}
 
 		//nothing to do if the revert is the empty string
-		if revert == "" {
+		if step.Revert == "" {
 			continue
 		}
 
-		_, err = db.Exec(revert)
+		_, err = db.Exec(step.Revert)
 		if err != nil {
-			return fmt.Errorf("coudln't execute recorded revert '%s': %v", revert, err)
+			return fmt.Errorf(
+				"coudln't execute recorded revert '%s': %v",
+				step.Revert, err,
+			)
 		}
 	}
 
@@ -222,28 +230,48 @@ func tryProgressOnSet(db DB, steps []Step) ([]Step, bool, error) {
 
 func checkMigrationTable(db DB) error {
 	_, err := db.Query(`select 1 from MIG_RECORDED_MIGRATIONS`)
-	if err == nil {
-		return nil //it already exists
+	if err != nil {
+		_, err = db.Exec(`
+			CREATE TABLE MIG_RECORDED_MIGRATIONS (
+				name   TEXT,
+				file   TEXT,
+				pkg    TEXT,
+				time   TIMESTAMP,
+				hash   TEXT,
+				revert TEXT
+			)
+		`)
+		if err != nil {
+			return fmt.Errorf("creating MIG_RECORDED_MIGRATIONS table: %v", err)
+		}
 	}
 
-	_, err = db.Exec(`
-		CREATE TABLE MIG_RECORDED_MIGRATIONS (
-			name   TEXT,
-			file   TEXT,
-			pkg    TEXT,
-			time   TIMESTAMP,
-			hash   TEXT,
-			revert TEXT
-		)
-	`)
+	_, err = db.Query(`select migration_order from MIG_RECORDED_MIGRATIONS limit 0`)
+	if err != nil {
+		var columnType string
+		if db.DriverName() == "mysql" {
+			columnType = "BIGINT UNSIGNED NOT NULL AUTO_INCREMENT UNIQUE"
+		} else if db.DriverName() == "postgres" {
+			columnType = "BIGSERIAL"
+		} else {
+			panic(fmt.Errorf("unsupported driver named %s", db.DriverName()))
+		}
+		_, err := db.Exec(fmt.Sprintf(`
+		  ALTER TABLE MIG_RECORDED_MIGRATIONS
+			ADD COLUMN  migration_order %s
+		`, columnType))
+		if err != nil {
+			return fmt.Errorf("adding order column: %v", err)
+		}
+	}
 
-	return err
+	return nil
 }
 
-func fetchCompletedSteps(db DB, pkgs []string) (map[string]string, error) {
+func fetchRecordedSteps(db DB, pkgs []string) (map[string]recordedStep, error) {
 	//collect the recored migrations
 	stmt := fmt.Sprintf(`
-		SELECT hash, revert
+		SELECT hash, revert, migration_order
 		FROM   MIG_RECORDED_MIGRATIONS
 		WHERE  pkg in (%s)
 	`, "'"+strings.Join(pkgs, "','")+"'")
@@ -252,11 +280,11 @@ func fetchCompletedSteps(db DB, pkgs []string) (map[string]string, error) {
 		return nil, err
 	}
 
-	recorded := map[string]string{}
+	recorded := map[string]recordedStep{}
 	for rows.Next() {
-		var hash, revert string
-		_ = rows.Scan(&hash, &revert)
-		recorded[hash] = revert
+		var step recordedStep
+		_ = rows.Scan(&step.Hash, &step.Revert, &step.Order)
+		recorded[step.Hash] = step
 	}
 
 	if err := rows.Err(); err != nil {

@@ -70,6 +70,11 @@ func Test(t *testing.T) {
 		testWhitespace(t, mysql)
 	})
 
+	t.Run("revert order", func(t *testing.T) {
+		testRevertOrder(t, pg)
+		testRevertOrder(t, mysql)
+	})
+
 	_ = mysql
 
 }
@@ -273,3 +278,62 @@ func testWhitespace(t *testing.T, db *sqlx.DB) {
 		t.Fatalf(`result.Survive != 42, result.Survive == "%v"`, result.Survive)
 	}
 }
+
+func testRevertOrder(t *testing.T, db *sqlx.DB) {
+	registeredMigrations = nil
+	Register([]Step{
+		{
+			Revert: `drop table mig_users`,
+			Migrate: `
+				create table mig_users(
+					id bigint,
+
+					UNIQUE (id)
+				)
+			`,
+		},
+		{
+			Revert: `drop table mig_orders`,
+			Migrate: `
+			create table mig_orders(
+				id       BIGINT,
+				customer BIGINT,
+
+				FOREIGN KEY (customer) references mig_users (id)
+			)
+			`,
+		},
+	})
+
+	err := Run(db)
+	if err != nil {
+		t.Fatalf("running migration: %v\n", err)
+	}
+
+	registeredMigrations = nil
+	Register([]Step{
+		{
+			Revert: `drop table mig_users`,
+			Migrate: `
+			create table mig_users(
+				id        bigint,
+				newcolumn int
+			)
+			`,
+		},
+		{
+			Revert: `drop table mig_orders`,
+			Migrate: `
+			create table mig_orders(
+				id bigint
+			)
+			`,
+		},
+	})
+
+	err = Run(db)
+	if err != nil {
+		t.Fatalf(": %v\n", err)
+	}
+}
+
