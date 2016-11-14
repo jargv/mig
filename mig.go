@@ -10,7 +10,6 @@ import (
 
 // TODO: support for logging
 // TODO: better readme, docs
-// TODO: build tag for mig_forward_only
 // TODO: consider a method for creating a new baseline. For example, keep
 //       the data in an existing installment, but pretend like it's
 //       migrations came from the new refactored versions of the migrations.
@@ -139,6 +138,14 @@ func skipCompletedSteps(steps []Step, recorded map[string]recordedStep) []Step {
 func doRecordedReverts(db DB, reverts map[string]recordedStep) error {
 	// TODO: make this transactional
 
+	if forward_only && len(reverts) > 0 {
+		hashes := []string{}
+		for _, revert := range reverts {
+			hashes = append(hashes, revert.Hash)
+		}
+		return fmt.Errorf("refusing to do reverts when running in forward-only mode\n Revert Hashes: %s", hashes)
+	}
+
 	orderedSteps := orderRecordedReverts(reverts)
 
 	for _, step := range orderedSteps {
@@ -209,7 +216,7 @@ func tryProgressOnSet(db DB, steps []Step) ([]Step, bool, error) {
 			INSERT into MIG_RECORDED_MIGRATIONS (name, file, hash, pkg, revert, time)
 			VALUES (%s, %s, %s, %s, %s, %s);
 		`, arg(db, 1), arg(db, 2), arg(db, 3), arg(db, 4), arg(db, 5), arg(db, 6))
-		_, err = tx.Exec(stmt, step.Name, step.file, step.hash, step.pkg, step.Revert, now)
+		_, err = tx.Exec(stmt, step.Name, step.file, step.hash, step.pkg, step.revert(), now)
 		if err != nil {
 			_ = tx.Rollback()
 			return nil, false, fmt.Errorf(

@@ -336,4 +336,3 @@ func testRevertOrder(t *testing.T, db *sqlx.DB) {
 		t.Fatalf(": %v\n", err)
 	}
 }
-

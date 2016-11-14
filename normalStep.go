@@ -1,34 +1,30 @@
+// +build !mig_forward
+
 package mig
 
-import (
-	"crypto/md5"
-	"encoding/base64"
-	"strings"
-)
+import "strings"
 
-// Step represents a single step in a migration
+const forward_only = false
+
 type Step struct {
 	Name    string
 	Migrate string
-	Revert  string
 	Prereq  string
+	Revert  string
 	hash    string
 	file    string
 	pkg     string
 }
 
+func (step *Step) revert() string {
+	return step.Revert
+}
+
 func (s *Step) cleanWhitespace() {
 	// we don't need whitespace in the db
 	s.Revert = cleanWhitespace(s.Revert)
-
 	// we want the hash to be invariant to whitespace
 	s.Migrate = cleanWhitespace(s.Migrate)
-}
-
-func (s *Step) computeHash() {
-	sum := md5.Sum([]byte(s.Migrate))
-	b64 := base64.StdEncoding.EncodeToString(sum[:])
-	s.hash = string(b64[:])
 }
 
 func cleanWhitespace(str string) string {
