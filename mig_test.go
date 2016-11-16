@@ -3,7 +3,9 @@ package mig
 import (
 	"os/exec"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/jmoiron/sqlx"
@@ -55,6 +57,14 @@ func Test(t *testing.T) {
 		t.Fatalf("couldn't connect to mysql test db: %v\n", err)
 	}
 
+	pg.SetMaxOpenConns(30)
+	mysql.SetMaxOpenConns(30)
+
+	t.Run("database lock", func(t *testing.T) {
+		testDatabaseLock(t, pg)
+		testDatabaseLock(t, mysql)
+	})
+
 	t.Run("revert", func(t *testing.T) {
 		testRevert(t, pg)
 		testRevert(t, mysql)
@@ -74,9 +84,6 @@ func Test(t *testing.T) {
 		testRevertOrder(t, pg)
 		testRevertOrder(t, mysql)
 	})
-
-	_ = mysql
-
 }
 
 type reg struct{}
@@ -334,5 +341,31 @@ func testRevertOrder(t *testing.T, db *sqlx.DB) {
 	err = Run(db)
 	if err != nil {
 		t.Fatalf(": %v\n", err)
+	}
+}
+
+func testDatabaseLock(t *testing.T, db *sqlx.DB) {
+	const count = 20
+	counts := map[int]int{}
+	wait := sync.WaitGroup{}
+	wait.Add(count)
+	for i := 0; i < count; i++ {
+		go func() {
+			err := WithDatabaseLock(db, 30*time.Second, func() error {
+				l := len(counts)
+				counts[l]++
+				return nil
+			})
+			if err != nil {
+				t.Fatalf("error locking: %v\n", err)
+			}
+			wait.Done()
+		}()
+	}
+
+	wait.Wait()
+
+	if len(counts) != count {
+		t.Fatalf(`len(counts) != %d, len(counts) == "%d"`, count, len(counts))
 	}
 }

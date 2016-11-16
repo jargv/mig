@@ -196,6 +196,7 @@ func tryProgressOnSet(db DB, steps []Step) ([]Step, bool, error) {
 		tx, err := db.Begin()
 
 		if err != nil {
+			_ = tx.Rollback()
 			return nil, false, err
 		}
 
@@ -226,6 +227,7 @@ func tryProgressOnSet(db DB, steps []Step) ([]Step, bool, error) {
 
 		err = tx.Commit()
 		if err != nil {
+			tx.Rollback()
 			return nil, false, fmt.Errorf("couldn't commit transaction: %v", err)
 		}
 
