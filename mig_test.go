@@ -21,6 +21,7 @@ import (
 /*postgres:
   create user testuser;
 	alter user testuser password 'testpassword'
+	alter user testuser createdb;
 */
 
 func Test(t *testing.T) {

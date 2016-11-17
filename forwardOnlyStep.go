@@ -17,6 +17,5 @@ func (step *Step) revert() string {
 	return ""
 }
 
-func (s *Step) cleanWhitespace() {
-
+func (s *Step) setRevert(string) {
 }
