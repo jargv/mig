@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"runtime"
 	"strings"
-	"time"
 )
 
 // TODO: support for logging
@@ -23,17 +22,20 @@ type DB interface {
 	DriverName() string
 }
 
-var registeredMigrations map[string][][]Step
+var registered map[string][]*series
 
 // Register queues a MigrationSet to be exectued when mig.Run(...) is called
-func Register(stepsIn []Step) {
+func Register(steps []Step) {
 	// get the file name of the calling function
 
 	filename, packagename := callerInfo()
 
-	// deep copy to avoid reference issues
-	steps := make([]Step, len(stepsIn))
-	for i, step := range stepsIn {
+	ser := &series{}
+	// deep copy to avoid reference issues, clean up along the way
+	ser.steps = make([]Step, len(steps))
+	for i := range steps {
+		ser.steps[i] = steps[i]
+		step := &ser.steps[i]
 		step.cleanWhitespace()
 		step.computeHash()
 		step.file = filename
@@ -41,14 +43,13 @@ func Register(stepsIn []Step) {
 		if step.Name == "" {
 			step.Name = fmt.Sprintf("unnamed-%d", i)
 		}
-		steps[i] = step
 	}
 
-	if registeredMigrations == nil {
-		registeredMigrations = make(map[string][][]Step)
+	if registered == nil {
+		registered = make(map[string][]*series)
 	}
 
-	registeredMigrations[packagename] = append(registeredMigrations[packagename], steps)
+	registered[packagename] = append(registered[packagename], ser)
 }
 
 // Run executes the migration Steps which have been registered by `mig.Register`
@@ -59,20 +60,20 @@ func Run(db DB) error {
 		return fmt.Errorf("creating migration table: %v", err)
 	}
 
-	pkgs := []string{}
-	sets := [][]Step{}
-	for pkg, setsForpkg := range registeredMigrations {
-		pkgs = append(pkgs, pkg)
-		sets = append(sets, setsForpkg...)
+	allPackages := []string{}
+	allSeries := []*series{}
+	for pkg, setsForpkg := range registered {
+		allPackages = append(allPackages, pkg)
+		allSeries = append(allSeries, setsForpkg...)
 	}
 
-	recorded, err := fetchRecordedSteps(db, pkgs)
+	recorded, err := fetchRecordedSteps(db, allPackages)
 	if err != nil {
 		return fmt.Errorf("fetching previous migrations: %v", err)
 	}
 
-	for i, set := range sets {
-		sets[i] = skipCompletedSteps(set, recorded)
+	for _, series := range allSeries {
+		series.skipRecordedSteps(recorded)
 	}
 
 	err = doRecordedReverts(db, recorded)
@@ -80,17 +81,17 @@ func Run(db DB) error {
 		return fmt.Errorf("performing recorded reverts: %v", err)
 	}
 
-	return runSteps(db, sets)
+	return runSteps(db, allSeries)
 }
 
-func runSteps(db DB, sets [][]Step) error {
+func runSteps(db DB, allSeries []*series) error {
 	//run the migration sets
 	for {
 		morePending := false
 		progressMade := false
 
-		for i, set := range sets {
-			newSet, currentSetProgressed, err := tryProgressOnSet(db, set)
+		for _, series := range allSeries {
+			currentSetProgressed, err := series.tryProgress(db)
 			if err != nil {
 				return err
 			}
@@ -101,11 +102,9 @@ func runSteps(db DB, sets [][]Step) error {
 			}
 
 			// track if more work is pending
-			if len(newSet) > 0 {
+			if !series.done() {
 				morePending = true
 			}
-
-			sets[i] = newSet
 		}
 
 		//if there isn't any more work, we're done!
@@ -115,24 +114,11 @@ func runSteps(db DB, sets [][]Step) error {
 
 		//if no progress was made, we're in an infinite loop
 		if !progressMade {
-			return fmt.Errorf("Unable to make progress on migration steps: %#v", sets)
+			return fmt.Errorf("Unable to make progress on migration steps: %#v", allSeries)
 		}
 	}
 
 	return nil
-}
-
-func skipCompletedSteps(steps []Step, recorded map[string]recordedStep) []Step {
-	for len(steps) > 0 {
-		hash := steps[0].hash
-		if _, ok := recorded[hash]; !ok {
-			break //we've found the migration to start at. Everything else must be redone.
-		}
-		delete(recorded, hash)
-		steps = steps[1:]
-	}
-
-	return steps
 }
 
 func doRecordedReverts(db DB, reverts map[string]recordedStep) error {
@@ -176,65 +162,6 @@ func doRecordedReverts(db DB, reverts map[string]recordedStep) error {
 	}
 
 	return nil
-}
-
-func tryProgressOnSet(db DB, steps []Step) ([]Step, bool, error) {
-	progress := false
-
-	for len(steps) > 0 {
-		step := steps[0]
-
-		if len(step.Prereq) > 0 {
-			_, err := db.Exec(step.Prereq)
-			if err != nil {
-				return steps, progress, nil
-			}
-		}
-
-		steps = steps[1:]
-
-		tx, err := db.Begin()
-
-		if err != nil {
-			_ = tx.Rollback()
-			return nil, false, err
-		}
-
-		_, err = tx.Exec(step.Migrate)
-
-		if err != nil {
-			_ = tx.Rollback()
-			return nil, false, fmt.Errorf(
-				"couldn't execute migration '%s': %v\n"+
-					"file: %s\n"+
-					"sql: `%s`",
-				step.Name, err, step.file, step.Migrate,
-			)
-		}
-
-		now := time.Now()
-		stmt := fmt.Sprintf(`
-			INSERT into MIG_RECORDED_MIGRATIONS (name, file, hash, pkg, revert, time)
-			VALUES (%s, %s, %s, %s, %s, %s);
-		`, arg(db, 1), arg(db, 2), arg(db, 3), arg(db, 4), arg(db, 5), arg(db, 6))
-		_, err = tx.Exec(stmt, step.Name, step.file, step.hash, step.pkg, step.revert(), now)
-		if err != nil {
-			_ = tx.Rollback()
-			return nil, false, fmt.Errorf(
-				"internal mig error (couldn't insert into MIG_RECORDED_MIGRATIONS table): %v", err,
-			)
-		}
-
-		err = tx.Commit()
-		if err != nil {
-			tx.Rollback()
-			return nil, false, fmt.Errorf("couldn't commit transaction: %v", err)
-		}
-
-		progress = true
-	}
-
-	return steps, progress, nil
 }
 
 func checkMigrationTable(db DB) error {

@@ -90,7 +90,7 @@ func Test(t *testing.T) {
 type reg struct{}
 
 func (r *reg) Register() {
-	registeredMigrations = nil
+	registered = nil
 	Register([]Step{
 		{
 			Migrate: `create table survive(val int)`,
@@ -138,7 +138,7 @@ func testRevert(t *testing.T, db *sqlx.DB) {
 	}
 
 	//reset the migration set
-	registeredMigrations = nil
+	registered = nil
 	Register([]Step{
 		{
 			Migrate: `create table survive(val int)`,
@@ -185,7 +185,7 @@ func testRevert(t *testing.T, db *sqlx.DB) {
 
 func testPrereq(t *testing.T, db *sqlx.DB) {
 
-	registeredMigrations = nil
+	registered = nil
 	Register([]Step{
 		{
 			Prereq: `
@@ -229,7 +229,7 @@ func testPrereq(t *testing.T, db *sqlx.DB) {
 }
 
 func testWhitespace(t *testing.T, db *sqlx.DB) {
-	registeredMigrations = nil
+	registered = nil
 	Register([]Step{
 		{
 			Revert: `drop table test_whitespace`,
@@ -253,10 +253,10 @@ func testWhitespace(t *testing.T, db *sqlx.DB) {
 		t.Fatalf("couldn't insert: %v\n", err)
 	}
 
-	registeredMigrations = nil
+	registered = nil
 
 	//this is the same migration, except for whitespace differences
-	registeredMigrations = nil
+	registered = nil
 	Register([]Step{
 		{
 			Revert: `drop table test_whitespace`,
@@ -288,7 +288,7 @@ func testWhitespace(t *testing.T, db *sqlx.DB) {
 }
 
 func testRevertOrder(t *testing.T, db *sqlx.DB) {
-	registeredMigrations = nil
+	registered = nil
 	Register([]Step{
 		{
 			Revert: `drop table mig_users`,
@@ -318,7 +318,7 @@ func testRevertOrder(t *testing.T, db *sqlx.DB) {
 		t.Fatalf("running migration: %v\n", err)
 	}
 
-	registeredMigrations = nil
+	registered = nil
 	Register([]Step{
 		{
 			Revert: `drop table mig_users`,
