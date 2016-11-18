@@ -41,7 +41,7 @@ func Test(t *testing.T) {
 		cmd.Stdin = strings.NewReader(strings.Join(input, " "))
 		return cmd.CombinedOutput()
 	}
-	mysqlTestDB("drop", "yes")
+	_, _ = mysqlTestDB("drop", "yes")
 	output, err = mysqlTestDB("create")
 	if err != nil {
 		t.Fatalf("couldn't create mysql db: %v, %s\n", err, string(output))
@@ -66,7 +66,7 @@ func Test(t *testing.T) {
 		testDatabaseLock(t, mysql)
 	})
 
-	t.Run("revert", func(t *testing.T) {
+	t.Run("revert smoothly", func(t *testing.T) {
 		testRevert(t, pg)
 		testRevert(t, mysql)
 	})
@@ -85,29 +85,34 @@ func Test(t *testing.T) {
 		testRevertOrder(t, pg)
 		testRevertOrder(t, mysql)
 	})
+
+	t.Run("reference revert", func(t *testing.T) {
+		testReferenceRevertFail(t, pg)
+		testReferenceRevertFail(t, mysql)
+	})
 }
 
 type reg struct{}
 
 func (r *reg) Register() {
-	registered = nil
 	Register([]Step{
 		{
 			Migrate: `create table survive(val int)`,
 		},
 		{
+			Revert: `drop table test_user`,
 			Migrate: `
 			create table test_user (
 				name TEXT,
 				food TEXT
 			)
 			`,
-			Revert: `drop table test_user`,
 		},
 	})
 }
 
 func testRevert(t *testing.T, db *sqlx.DB) {
+	registered = nil
 	var reg reg
 	//register from a method, just to test that case
 	reg.Register()
@@ -234,7 +239,7 @@ func testWhitespace(t *testing.T, db *sqlx.DB) {
 		{
 			Revert: `drop table test_whitespace`,
 			Migrate: `
-			  --comments shouldn't affect things...
+				--comments shouldn't affect things...
 				create table test_whitespace(
 					survive int
 				)
@@ -342,6 +347,67 @@ func testRevertOrder(t *testing.T, db *sqlx.DB) {
 	err = Run(db)
 	if err != nil {
 		t.Fatalf(": %v\n", err)
+	}
+}
+
+func testReferenceRevertFail(t *testing.T, db *sqlx.DB) {
+	registered = nil
+	Register([]Step{
+		{
+			Revert: `drop table revert_user`,
+			Migrate: `
+			  create table revert_user (
+					id int primary key
+				)
+			`,
+		},
+	})
+
+	Register([]Step{
+		{
+			Revert: `drop table user_items`,
+			Migrate: `
+			create table user_items (
+				owner int references revert_user (id)
+			)
+			`,
+		},
+	})
+
+	err := Run(db)
+	if err != nil {
+		t.Fatalf("running migrations: %v\n", err)
+	}
+
+	// now change the referenced table to test that
+	// things are being reverted properly
+	registered = nil
+	Register([]Step{
+		{
+			Revert: `drop table revert_user`,
+			Migrate: `
+			create table revert_user (
+				id int primary key,
+				newfield int
+			)
+			`,
+		},
+	})
+
+	Register([]Step{
+		{
+			Revert: `drop table user_items`,
+			Migrate: `
+			create table user_items (
+				owner int references revert_user (id)
+			)
+			`,
+		},
+	})
+
+	err = Run(db)
+	if err != nil {
+		t.Fatalf("running migrations: %v\n", err)
 	}
 }
 

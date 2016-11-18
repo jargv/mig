@@ -31,7 +31,6 @@ func Register(steps []Step) {
 	filename, packagename := callerInfo()
 
 	ser := &series{}
-	// deep copy to avoid reference issues, clean up along the way
 	ser.steps = make([]Step, len(steps))
 	for i := range steps {
 		ser.steps[i] = steps[i]
@@ -73,12 +72,25 @@ func Run(db DB) error {
 	}
 
 	for _, series := range allSeries {
-		series.skipRecordedSteps(recorded)
+		series.syncWithRecordedSteps(recorded)
 	}
 
-	err = doRecordedReverts(db, recorded)
-	if err != nil {
-		return fmt.Errorf("performing recorded reverts: %v", err)
+	revertPoint := -1
+	for _, r := range recorded {
+		if revertPoint == -1 || r.Order < revertPoint {
+			revertPoint = r.Order
+		}
+	}
+
+	if revertPoint != -1 {
+		err = doRevertsAtRevertPoint(db, revertPoint)
+		if err != nil {
+			return fmt.Errorf("doing reverts: %v", err)
+		}
+
+		for _, series := range allSeries {
+			series.rewindToRevertPoint(revertPoint)
+		}
 	}
 
 	return runSteps(db, allSeries)
@@ -121,20 +133,45 @@ func runSteps(db DB, allSeries []*series) error {
 	return nil
 }
 
-func doRecordedReverts(db DB, reverts map[string]recordedStep) error {
+func doRevertsAtRevertPoint(db DB, revertPoint int) error {
 	// TODO: make this transactional
 
-	if forward_only && len(reverts) > 0 {
-		hashes := []string{}
-		for _, revert := range reverts {
-			hashes = append(hashes, revert.Hash)
-		}
-		return fmt.Errorf("refusing to do reverts when running in forward-only mode\n Revert Hashes: %s", hashes)
+	if forward_only {
+		return fmt.Errorf(
+			"refusing to do reverts when running in forward-only mode. Revert Point: %d",
+			revertPoint,
+		)
 	}
 
-	orderedSteps := orderRecordedReverts(reverts)
+	type revertStep struct {
+		Hash, Revert string
+	}
 
-	for _, step := range orderedSteps {
+	revertSteps := []revertStep{}
+
+	stmt := fmt.Sprintf(`
+	  SELECT   revert, hash
+		FROM     MIG_RECORDED_MIGRATIONS
+		WHERE    migration_order >= %s
+		ORDER BY migration_order DESC
+	`, arg(db, 1))
+
+	rows, err := db.Query(stmt, revertPoint)
+	if err != nil {
+		return fmt.Errorf("fetching recorded reverts: %v", err)
+	}
+
+	for rows.Next() {
+		var step revertStep
+		_ = rows.Scan(&step.Revert, &step.Hash)
+		revertSteps = append(revertSteps, step)
+	}
+
+	if rows.Err() != nil {
+		return fmt.Errorf("fetching reverts: %v", rows.Err())
+	}
+
+	for _, step := range revertSteps {
 		stmt := fmt.Sprintf(`
 			DELETE FROM MIG_RECORDED_MIGRATIONS
 			WHERE       hash = %s
@@ -155,7 +192,7 @@ func doRecordedReverts(db DB, reverts map[string]recordedStep) error {
 		_, err = db.Exec(step.Revert)
 		if err != nil {
 			return fmt.Errorf(
-				"coudln't execute recorded revert '%s': %v",
+				"executing recorded revert '%s': %v",
 				step.Revert, err,
 			)
 		}
@@ -207,7 +244,7 @@ func checkMigrationTable(db DB) error {
 func fetchRecordedSteps(db DB, pkgs []string) (map[string]recordedStep, error) {
 	//collect the recored migrations
 	stmt := fmt.Sprintf(`
-		SELECT hash, revert, migration_order
+		SELECT hash, migration_order
 		FROM   MIG_RECORDED_MIGRATIONS
 		WHERE  pkg in (%s)
 	`, "'"+strings.Join(pkgs, "','")+"'")
@@ -219,7 +256,7 @@ func fetchRecordedSteps(db DB, pkgs []string) (map[string]recordedStep, error) {
 	recorded := map[string]recordedStep{}
 	for rows.Next() {
 		var step recordedStep
-		_ = rows.Scan(&step.Hash, &step.Revert, &step.Order)
+		_ = rows.Scan(&step.Hash, &step.Order)
 		recorded[step.Hash] = step
 	}
 

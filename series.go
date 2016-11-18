@@ -6,29 +6,42 @@ import (
 )
 
 type series struct {
-	steps []Step
+	steps       []Step
+	currentStep int
 }
 
 func (s *series) done() bool {
-	return len(s.steps) == 0
+	return s.currentStep >= len(s.steps)
 }
 
-func (s *series) skipRecordedSteps(recorded map[string]recordedStep) {
-	for len(s.steps) > 0 {
-		hash := s.steps[0].hash
-		if _, ok := recorded[hash]; !ok {
-			break //we've found the migration to start at. Everything else must be redone.
+func (s *series) syncWithRecordedSteps(recorded map[string]recordedStep) {
+	var i int
+	for i = 0; i < len(s.steps); i++ {
+		hash := s.steps[i].hash
+
+		r, ok := recorded[hash]
+
+		if !ok {
+			break
 		}
+
 		delete(recorded, hash)
-		s.steps = s.steps[1:]
+		s.steps[i].order = r.Order
+	}
+	s.currentStep = i
+}
+
+func (s *series) rewindToRevertPoint(revertPoint int) {
+	for s.currentStep > 1 && s.steps[s.currentStep-1].order >= revertPoint {
+		s.currentStep--
 	}
 }
 
 func (s *series) tryProgress(db DB) (bool, error) {
 	progress := false
 
-	for len(s.steps) > 0 {
-		step := s.steps[0]
+	for ; s.currentStep < len(s.steps); s.currentStep++ {
+		step := s.steps[s.currentStep]
 
 		if len(step.Prereq) > 0 {
 			_, err := db.Exec(step.Prereq)
@@ -36,8 +49,6 @@ func (s *series) tryProgress(db DB) (bool, error) {
 				return progress, nil
 			}
 		}
-
-		s.steps = s.steps[1:]
 
 		tx, err := db.Begin()
 
@@ -60,8 +71,8 @@ func (s *series) tryProgress(db DB) (bool, error) {
 
 		now := time.Now()
 		stmt := fmt.Sprintf(`
-		INSERT into MIG_RECORDED_MIGRATIONS (name, file, hash, pkg, revert, time)
-		VALUES (%s, %s, %s, %s, %s, %s);
+			INSERT into MIG_RECORDED_MIGRATIONS (name, file, hash, pkg, revert, time)
+			VALUES (%s, %s, %s, %s, %s, %s);
 		`, arg(db, 1), arg(db, 2), arg(db, 3), arg(db, 4), arg(db, 5), arg(db, 6))
 		_, err = tx.Exec(stmt, step.Name, step.file, step.hash, step.pkg, step.revert(), now)
 		if err != nil {
