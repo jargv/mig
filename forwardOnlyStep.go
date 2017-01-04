@@ -11,7 +11,7 @@ type Step struct {
 	hash    string
 	file    string
 	pkg     string
-	order   string
+	order   int
 }
 
 func (step *Step) revert() string {
