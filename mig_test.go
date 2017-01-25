@@ -66,10 +66,10 @@ func Test(t *testing.T) {
 		testDatabaseLock(t, mysql)
 	})
 
-	// t.Run("re-run", func(t *testing.T) {
-	// 	testReRun(t, pg)
-	// 	testReRun(t, mysql)
-	// })
+	t.Run("values-preserved", func(t *testing.T) {
+		testValuesPreserved(t, pg)
+		testValuesPreserved(t, mysql)
+	})
 
 	t.Run("prereq", func(t *testing.T) {
 		testPrereq(t, pg)
@@ -82,16 +82,41 @@ func Test(t *testing.T) {
 	})
 }
 
-func testReRun(t *testing.T, db *sqlx.DB) {
+func testValuesPreserved(t *testing.T, db *sqlx.DB) {
+	registered = nil
 	Register([]Step{
 		{
 			Migrate: `create table rerun(id int)`,
 		},
 	})
 
-	_, err := db.Exec(`insert into rerun(id) values (42)`)
+	err := Run(db)
+	if err != nil {
+		t.Fatalf("running migrations: %v\n", err)
+	}
+
+	_, err = db.Exec(`insert into rerun(id) values (42)`)
 	if err != nil {
 		t.Fatalf("inserting placeholder value: %v\n", err)
+	}
+
+	Register([]Step{
+		{
+			Migrate: `create table rerun(id int)`,
+		},
+		{
+			Migrate: `alter table rerun add column name text`,
+		},
+	})
+
+	var val int
+	err = db.Get(&val, `select id from rerun limit 1`)
+	if err != nil {
+		t.Fatalf("getting placeholder value: %v\n", err)
+	}
+
+	if val != 42 {
+		t.Fatalf(`val != 42, val == "%v"`, val)
 	}
 
 }
