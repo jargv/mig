@@ -14,26 +14,20 @@ func (s *series) done() bool {
 	return s.currentStep >= len(s.steps)
 }
 
-func (s *series) syncWithRecordedSteps(hashes map[string]struct{}) {
-	var i int
-	for i = 0; i < len(s.steps); i++ {
-		hash := s.steps[i].hash
-
-		_, ok := hashes[hash]
-
-		if !ok {
-			break
-		}
-
-		delete(hashes, hash)
-	}
-	s.currentStep = i
+func (s *series) currentStepIsAlreadyDone(hashes map[string]struct{}) bool {
+	currentHash := s.steps[s.currentStep].hash
+	_, ok := hashes[currentHash]
+	return ok
 }
 
-func (s *series) tryProgress(db DB) (bool, error) {
+func (s *series) tryProgress(db DB, hashes map[string]struct{}) (bool, error) {
 	progress := false
 
 	for ; s.currentStep < len(s.steps); s.currentStep++ {
+		if s.currentStepIsAlreadyDone(hashes) {
+			continue
+		}
+
 		step := s.steps[s.currentStep]
 
 		if step.isPrereq {

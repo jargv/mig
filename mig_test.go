@@ -98,19 +98,32 @@ func testValuesPreserved(t *testing.T, db *sqlx.DB) {
 		t.Fatalf("inserting placeholder value: %v\n", err)
 	}
 
+	registered = nil
 	RegisterMigrations(
 		`create table rerun(id int)`,
 		`ALTER TABLE rerun ADD COLUMN name TEXT`,
 	)
 
-	var val int
-	err = db.Get(&val, `select id from rerun limit 1`)
+	err = RunMigrations(db)
+	if err != nil {
+		t.Fatalf("running migrations: %v\n", err)
+	}
+
+	var val struct {
+		Id   int
+		Name *string
+	}
+	err = db.Get(&val, `select id, name from rerun limit 1`)
 	if err != nil {
 		t.Fatalf("getting placeholder value: %v\n", err)
 	}
 
-	if val != 42 {
-		t.Fatalf(`val != 42, val == "%v"`, val)
+	if val.Id != 42 {
+		t.Fatalf(`val.Id != 42, val.Id == "%v"`, val)
+	}
+
+	if val.Name != nil {
+		t.Fatalf(`val.Name != nil, val.Name == "%v"`, val.Name)
 	}
 
 }
@@ -146,6 +159,22 @@ func testPrereq(t *testing.T, db *sqlx.DB) {
 
 	if len(result) != 2 {
 		t.Fatalf(`len(result) != 2, len(result) == "%v"`, len(result))
+	}
+
+	// now try the migrations again to make sure it works out
+	registered = nil
+	RegisterMigrations(
+		Prereq(` select 1 from test_prereq`),
+		`alter table test_prereq add column food varchar(20)`,
+	)
+
+	RegisterMigrations(
+		`create table test_prereq(dummy int)`,
+	)
+
+	err = RunMigrations(db)
+	if err != nil {
+		t.Fatalf("Re-running migrations: %v\n", err)
 	}
 }
 

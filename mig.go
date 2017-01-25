@@ -104,21 +104,17 @@ func RunMigrations(db DB) error {
 		return fmt.Errorf("fetching previous migrations: %v", err)
 	}
 
-	for _, series := range allSeries {
-		series.syncWithRecordedSteps(recorded)
-	}
-
-	return runSteps(db, allSeries)
+	return runSteps(db, recorded, allSeries)
 }
 
-func runSteps(db DB, allSeries []*series) error {
+func runSteps(db DB, hashes map[string]struct{}, allSeries []*series) error {
 	//run the migration sets
 	for {
 		morePending := false
 		progressMade := false
 
 		for _, series := range allSeries {
-			currentSetProgressed, err := series.tryProgress(db)
+			currentSetProgressed, err := series.tryProgress(db, hashes)
 			if err != nil {
 				return err
 			}
