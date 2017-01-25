@@ -84,11 +84,11 @@ func Test(t *testing.T) {
 
 func testValuesPreserved(t *testing.T, db *sqlx.DB) {
 	registered = nil
-	Register(
+	RegisterMigrations(
 		`create table rerun(id int)`,
 	)
 
-	err := Run(db)
+	err := RunMigrations(MakeDB(db.DriverName(), db.DB))
 	if err != nil {
 		t.Fatalf("running migrations: %v\n", err)
 	}
@@ -98,9 +98,9 @@ func testValuesPreserved(t *testing.T, db *sqlx.DB) {
 		t.Fatalf("inserting placeholder value: %v\n", err)
 	}
 
-	Register(
+	RegisterMigrations(
 		`create table rerun(id int)`,
-		`alter table rerun add column name text`,
+		`ALTER TABLE rerun ADD COLUMN name TEXT`,
 	)
 
 	var val int
@@ -117,16 +117,16 @@ func testValuesPreserved(t *testing.T, db *sqlx.DB) {
 
 func testPrereq(t *testing.T, db *sqlx.DB) {
 	registered = nil
-	Register(
+	RegisterMigrations(
 		Prereq(` select 1 from test_prereq`),
 		`alter table test_prereq add column food varchar(20)`,
 	)
 
-	Register(
+	RegisterMigrations(
 		`create table test_prereq(dummy int)`,
 	)
 
-	err := Run(db)
+	err := RunMigrations(db)
 	if err != nil {
 		t.Fatalf("couldn't run migrations: %v\n", err)
 	}
@@ -151,7 +151,7 @@ func testPrereq(t *testing.T, db *sqlx.DB) {
 
 func testWhitespace(t *testing.T, db *sqlx.DB) {
 	registered = nil
-	Register(
+	RegisterMigrations(
 		`
 			--comments shouldn't affect things...
 			create table test_whitespace(
@@ -160,7 +160,7 @@ func testWhitespace(t *testing.T, db *sqlx.DB) {
 		`,
 	)
 
-	err := Run(db)
+	err := RunMigrations(db)
 	if err != nil {
 		t.Fatalf(": %v\n", err)
 	}
@@ -173,7 +173,7 @@ func testWhitespace(t *testing.T, db *sqlx.DB) {
 
 	//this is the same migration, except for whitespace differences
 	registered = nil
-	Register(
+	RegisterMigrations(
 		strings.Join([]string{
 			"create table test_whitespace(",
 			"survive int",
@@ -181,7 +181,7 @@ func testWhitespace(t *testing.T, db *sqlx.DB) {
 		}, "\n"),
 	)
 
-	if err = Run(db); err != nil {
+	if err = RunMigrations(db); err != nil {
 		t.Fatalf(": %v\n", err)
 	}
 

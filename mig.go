@@ -10,6 +10,8 @@ import (
 
 // TODO: support for logging
 // TODO: better readme, docs
+// TODO: clean up the implementation, there's still remnants from when
+//       it was much more complicated
 
 // DB is an interface that allows you to use the standard *sql.DB or a *sqlx.DB
 // (or any other connection that implements the interface!)
@@ -19,6 +21,19 @@ type DB interface {
 	Begin() (*sql.Tx, error)
 	Query(query string, args ...interface{}) (*sql.Rows, error)
 	DriverName() string
+}
+
+type db struct {
+	*sql.DB
+	driverName string
+}
+
+func (d *db) DriverName() string {
+	return d.driverName
+}
+
+func MakeDB(driver string, d *sql.DB) *db {
+	return &db{d, driver}
 }
 
 type step struct {
@@ -37,7 +52,7 @@ type Prereq string
 var registered map[string][]*series
 
 // Register queues a MigrationSet to be exectued when mig.Run(...) is called
-func Register(steps ...interface{}) {
+func RegisterMigrations(steps ...interface{}) {
 	// get the file name of the calling function
 	filename, packagename := callerInfo()
 
@@ -71,7 +86,7 @@ func Register(steps ...interface{}) {
 
 // Run executes the migration Steps which have been registered by `mig.Register`
 // on the given database connection
-func Run(db DB) error {
+func RunMigrations(db DB) error {
 	err := checkMigrationTable(db)
 	if err != nil {
 		return fmt.Errorf("creating migration table: %v", err)
