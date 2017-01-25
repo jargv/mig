@@ -13,8 +13,6 @@ func (s *Step) computeHash() {
 }
 
 func (s *Step) cleanWhitespace() {
-	// we don't need whitespace in the db
-	s.setRevert(cleanWhitespace(s.revert()))
 	// we want the hash to be invariant to whitespace
 	s.Migrate = cleanWhitespace(s.Migrate)
 }

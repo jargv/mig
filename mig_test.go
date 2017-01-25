@@ -66,10 +66,10 @@ func Test(t *testing.T) {
 		testDatabaseLock(t, mysql)
 	})
 
-	t.Run("revert smoothly", func(t *testing.T) {
-		testRevert(t, pg)
-		testRevert(t, mysql)
-	})
+	// t.Run("re-run", func(t *testing.T) {
+	// 	testReRun(t, pg)
+	// 	testReRun(t, mysql)
+	// })
 
 	t.Run("prereq", func(t *testing.T) {
 		testPrereq(t, pg)
@@ -80,116 +80,23 @@ func Test(t *testing.T) {
 		testWhitespace(t, pg)
 		testWhitespace(t, mysql)
 	})
-
-	t.Run("revert order", func(t *testing.T) {
-		testRevertOrder(t, pg)
-		testRevertOrder(t, mysql)
-	})
-
-	t.Run("reference revert", func(t *testing.T) {
-		testReferenceRevertFail(t, pg)
-		testReferenceRevertFail(t, mysql)
-	})
 }
 
-type reg struct{}
-
-func (r *reg) Register() {
+func testReRun(t *testing.T, db *sqlx.DB) {
 	Register([]Step{
 		{
-			Migrate: `create table survive(val int)`,
-		},
-		{
-			Revert: `drop table test_user`,
-			Migrate: `
-			create table test_user (
-				name TEXT,
-				food TEXT
-			)
-			`,
+			Migrate: `create table rerun(id int)`,
 		},
 	})
-}
 
-func testRevert(t *testing.T, db *sqlx.DB) {
-	registered = nil
-	var reg reg
-	//register from a method, just to test that case
-	reg.Register()
-
-	err := Run(db)
+	_, err := db.Exec(`insert into rerun(id) values (42)`)
 	if err != nil {
-		t.Fatalf(": %v\n", err)
+		t.Fatalf("inserting placeholder value: %v\n", err)
 	}
 
-	stmt := `insert into survive (val) values (42)`
-	if _, err = db.Exec(stmt); err != nil {
-		t.Fatalf("couldn't insert: %v\n", err)
-	}
-
-	stmt = `insert into test_user (name, food) values ('Jonathan', 'crab'), ('Sarah', 'ice cream')`
-	if _, err = db.Exec(stmt); err != nil {
-		t.Fatalf("couldn't insert: %v\n", err)
-	}
-
-	var result1 []struct {
-		Name string `db:"name"`
-		Food string `db:"food"`
-	}
-
-	db.Select(&result1, "select * from test_user")
-	if len(result1) != 2 {
-		t.Fatalf(`len(result) != 2, len(result) == "%v"`, len(result1))
-	}
-
-	//reset the migration set
-	registered = nil
-	Register([]Step{
-		{
-			Migrate: `create table survive(val int)`,
-		},
-		{
-			Migrate: `
-				create table test_user (
-					name TEXT,
-					tv   TEXT
-				)
-			`,
-		},
-	})
-	err = Run(db)
-	if err != nil {
-		t.Fatalf(": %v\n", err)
-	}
-
-	stmt = `insert into test_user (name, tv) values ('Jonathan', 'Rick and Morty'), ('Sarah', 'The Office')`
-	if _, err = db.Exec(stmt); err != nil {
-		t.Fatalf("couldn't insert: %v\n", err)
-	}
-
-	var result2 []struct {
-		Name string `db:"name"`
-		Tv   string `db:"tv"`
-	}
-	db.Select(&result2, "select * from test_user")
-	if len(result2) != 2 {
-		t.Fatalf(`len(result2) != 2, len(result2) == "%v"`, len(result2))
-	}
-
-	var surviver struct {
-		Val int
-	}
-	err = db.Get(&surviver, `select val from survive limit 1`)
-	if err != nil {
-		t.Fatalf("table 'survive' didn't survive as expected: %v\n", err)
-	}
-	if surviver.Val != 42 {
-		t.Fatalf(`surviver.Val != 42, surviver.Val == "%v"`, surviver.Val)
-	}
 }
 
 func testPrereq(t *testing.T, db *sqlx.DB) {
-
 	registered = nil
 	Register([]Step{
 		{
@@ -237,7 +144,6 @@ func testWhitespace(t *testing.T, db *sqlx.DB) {
 	registered = nil
 	Register([]Step{
 		{
-			Revert: `drop table test_whitespace`,
 			Migrate: `
 				--comments shouldn't affect things...
 				create table test_whitespace(
@@ -258,13 +164,10 @@ func testWhitespace(t *testing.T, db *sqlx.DB) {
 		t.Fatalf("couldn't insert: %v\n", err)
 	}
 
-	registered = nil
-
 	//this is the same migration, except for whitespace differences
 	registered = nil
 	Register([]Step{
 		{
-			Revert: `drop table test_whitespace`,
 			Migrate: strings.Join([]string{
 				"create table test_whitespace(",
 				"survive int",
@@ -273,141 +176,21 @@ func testWhitespace(t *testing.T, db *sqlx.DB) {
 		},
 	})
 
-	err = Run(db)
-	if err != nil {
+	if err = Run(db); err != nil {
 		t.Fatalf(": %v\n", err)
 	}
 
-	//check if the value survived as expected
+	// check if the value survived as expected
 	var result struct {
 		Survive int
 	}
-	err = db.Get(&result, "select * from test_whitespace")
-	if err != nil {
+
+	if err = db.Get(&result, "select * from test_whitespace"); err != nil {
 		t.Fatalf("couldn't select: %v\n", err)
 	}
 
 	if result.Survive != 42 {
 		t.Fatalf(`result.Survive != 42, result.Survive == "%v"`, result.Survive)
-	}
-}
-
-func testRevertOrder(t *testing.T, db *sqlx.DB) {
-	registered = nil
-	Register([]Step{
-		{
-			Revert: `drop table mig_users`,
-			Migrate: `
-				create table mig_users(
-					id bigint,
-
-					UNIQUE (id)
-				)
-			`,
-		},
-		{
-			Revert: `drop table mig_orders`,
-			Migrate: `
-			create table mig_orders(
-				id       BIGINT,
-				customer BIGINT,
-
-				FOREIGN KEY (customer) references mig_users (id)
-			)
-			`,
-		},
-	})
-
-	err := Run(db)
-	if err != nil {
-		t.Fatalf("running migration: %v\n", err)
-	}
-
-	registered = nil
-	Register([]Step{
-		{
-			Revert: `drop table mig_users`,
-			Migrate: `
-			create table mig_users(
-				id        bigint,
-				newcolumn int
-			)
-			`,
-		},
-		{
-			Revert: `drop table mig_orders`,
-			Migrate: `
-			create table mig_orders(
-				id bigint
-			)
-			`,
-		},
-	})
-
-	err = Run(db)
-	if err != nil {
-		t.Fatalf(": %v\n", err)
-	}
-}
-
-func testReferenceRevertFail(t *testing.T, db *sqlx.DB) {
-	registered = nil
-	Register([]Step{
-		{
-			Revert: `drop table revert_user`,
-			Migrate: `
-			  create table revert_user (
-					id int primary key
-				)
-			`,
-		},
-	})
-
-	Register([]Step{
-		{
-			Revert: `drop table user_items`,
-			Migrate: `
-			create table user_items (
-				owner int references revert_user (id)
-			)
-			`,
-		},
-	})
-
-	err := Run(db)
-	if err != nil {
-		t.Fatalf("running migrations: %v\n", err)
-	}
-
-	// now change the referenced table to test that
-	// things are being reverted properly
-	registered = nil
-	Register([]Step{
-		{
-			Revert: `drop table revert_user`,
-			Migrate: `
-			create table revert_user (
-				id int primary key,
-				newfield int
-			)
-			`,
-		},
-	})
-
-	Register([]Step{
-		{
-			Revert: `drop table user_items`,
-			Migrate: `
-			create table user_items (
-				owner int references revert_user (id)
-			)
-			`,
-		},
-	})
-
-	err = Run(db)
-	if err != nil {
-		t.Fatalf("running migrations: %v\n", err)
 	}
 }
 

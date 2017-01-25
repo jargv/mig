@@ -14,27 +14,20 @@ func (s *series) done() bool {
 	return s.currentStep >= len(s.steps)
 }
 
-func (s *series) syncWithRecordedSteps(recorded map[string]recordedStep) {
+func (s *series) syncWithRecordedSteps(hashes map[string]struct{}) {
 	var i int
 	for i = 0; i < len(s.steps); i++ {
 		hash := s.steps[i].hash
 
-		r, ok := recorded[hash]
+		_, ok := hashes[hash]
 
 		if !ok {
 			break
 		}
 
-		delete(recorded, hash)
-		s.steps[i].order = r.Order
+		delete(hashes, hash)
 	}
 	s.currentStep = i
-}
-
-func (s *series) rewindToRevertPoint(revertPoint int) {
-	for s.currentStep > 1 && s.steps[s.currentStep-1].order >= revertPoint {
-		s.currentStep--
-	}
 }
 
 func (s *series) tryProgress(db DB) (bool, error) {
@@ -71,10 +64,10 @@ func (s *series) tryProgress(db DB) (bool, error) {
 
 		now := time.Now()
 		stmt := fmt.Sprintf(`
-			INSERT into MIG_RECORDED_MIGRATIONS (name, file, hash, pkg, revert, time)
-			VALUES (%s, %s, %s, %s, %s, %s);
-		`, arg(db, 1), arg(db, 2), arg(db, 3), arg(db, 4), arg(db, 5), arg(db, 6))
-		_, err = tx.Exec(stmt, step.Name, step.file, step.hash, step.pkg, step.revert(), now)
+			INSERT into MIG_RECORDED_MIGRATIONS (name, file, hash, pkg, time)
+			VALUES (%s, %s, %s, %s, %s);
+		`, arg(db, 1), arg(db, 2), arg(db, 3), arg(db, 4), arg(db, 5))
+		_, err = tx.Exec(stmt, step.Name, step.file, step.hash, step.pkg, now)
 		if err != nil {
 			_ = tx.Rollback()
 			return false, fmt.Errorf(
