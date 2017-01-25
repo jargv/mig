@@ -6,15 +6,15 @@ import (
 	"strings"
 )
 
-func (s *Step) computeHash() {
-	sum := md5.Sum([]byte(s.Migrate))
+func (s *step) computeHash() {
+	sum := md5.Sum([]byte(s.migrate))
 	b64 := base64.StdEncoding.EncodeToString(sum[:])
 	s.hash = string(b64[:])
 }
 
-func (s *Step) cleanWhitespace() {
+func (s *step) cleanWhitespace() {
 	// we want the hash to be invariant to whitespace
-	s.Migrate = cleanWhitespace(s.Migrate)
+	s.migrate = cleanWhitespace(s.migrate)
 }
 
 func cleanWhitespace(str string) string {

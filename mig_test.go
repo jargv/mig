@@ -84,11 +84,9 @@ func Test(t *testing.T) {
 
 func testValuesPreserved(t *testing.T, db *sqlx.DB) {
 	registered = nil
-	Register([]Step{
-		{
-			Migrate: `create table rerun(id int)`,
-		},
-	})
+	Register(
+		`create table rerun(id int)`,
+	)
 
 	err := Run(db)
 	if err != nil {
@@ -100,14 +98,10 @@ func testValuesPreserved(t *testing.T, db *sqlx.DB) {
 		t.Fatalf("inserting placeholder value: %v\n", err)
 	}
 
-	Register([]Step{
-		{
-			Migrate: `create table rerun(id int)`,
-		},
-		{
-			Migrate: `alter table rerun add column name text`,
-		},
-	})
+	Register(
+		`create table rerun(id int)`,
+		`alter table rerun add column name text`,
+	)
 
 	var val int
 	err = db.Get(&val, `select id from rerun limit 1`)
@@ -123,24 +117,14 @@ func testValuesPreserved(t *testing.T, db *sqlx.DB) {
 
 func testPrereq(t *testing.T, db *sqlx.DB) {
 	registered = nil
-	Register([]Step{
-		{
-			Prereq: `
-			  select 1 from test_prereq
-			`,
-			Migrate: `
-			  alter table test_prereq add column food varchar(20)
-			`,
-		},
-	})
+	Register(
+		Prereq(` select 1 from test_prereq`),
+		`alter table test_prereq add column food varchar(20)`,
+	)
 
-	Register([]Step{
-		{
-			Migrate: `
-			  create table test_prereq(dummy int)
-			`,
-		},
-	})
+	Register(
+		`create table test_prereq(dummy int)`,
+	)
 
 	err := Run(db)
 	if err != nil {
@@ -167,16 +151,14 @@ func testPrereq(t *testing.T, db *sqlx.DB) {
 
 func testWhitespace(t *testing.T, db *sqlx.DB) {
 	registered = nil
-	Register([]Step{
-		{
-			Migrate: `
-				--comments shouldn't affect things...
-				create table test_whitespace(
-					survive int
-				)
-			`,
-		},
-	})
+	Register(
+		`
+			--comments shouldn't affect things...
+			create table test_whitespace(
+				survive int
+			)
+		`,
+	)
 
 	err := Run(db)
 	if err != nil {
@@ -191,15 +173,13 @@ func testWhitespace(t *testing.T, db *sqlx.DB) {
 
 	//this is the same migration, except for whitespace differences
 	registered = nil
-	Register([]Step{
-		{
-			Migrate: strings.Join([]string{
-				"create table test_whitespace(",
-				"survive int",
-				")",
-			}, "\n"),
-		},
-	})
+	Register(
+		strings.Join([]string{
+			"create table test_whitespace(",
+			"survive int",
+			")",
+		}, "\n"),
+	)
 
 	if err = Run(db); err != nil {
 		t.Fatalf(": %v\n", err)

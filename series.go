@@ -6,7 +6,7 @@ import (
 )
 
 type series struct {
-	steps       []Step
+	steps       []step
 	currentStep int
 }
 
@@ -36,11 +36,12 @@ func (s *series) tryProgress(db DB) (bool, error) {
 	for ; s.currentStep < len(s.steps); s.currentStep++ {
 		step := s.steps[s.currentStep]
 
-		if len(step.Prereq) > 0 {
-			_, err := db.Exec(step.Prereq)
+		if step.isPrereq {
+			_, err := db.Exec(step.migrate)
 			if err != nil {
 				return progress, nil
 			}
+			continue //prereqs don't have migrations after them
 		}
 
 		tx, err := db.Begin()
@@ -50,24 +51,24 @@ func (s *series) tryProgress(db DB) (bool, error) {
 			return false, err
 		}
 
-		_, err = tx.Exec(step.Migrate)
+		_, err = tx.Exec(step.migrate)
 
 		if err != nil {
 			_ = tx.Rollback()
 			return false, fmt.Errorf(
-				"couldn't execute migration '%s': %v\n"+
+				"couldn't execute migration': %v\n"+
 					"file: %s\n"+
 					"sql: `%s`",
-				step.Name, err, step.file, step.Migrate,
+				err, step.file, step.migrate,
 			)
 		}
 
 		now := time.Now()
 		stmt := fmt.Sprintf(`
-			INSERT into MIG_RECORDED_MIGRATIONS (name, file, hash, pkg, time)
+			INSERT into MIG_RECORDED_MIGRATIONS (sql_text, file, hash, pkg, time)
 			VALUES (%s, %s, %s, %s, %s);
 		`, arg(db, 1), arg(db, 2), arg(db, 3), arg(db, 4), arg(db, 5))
-		_, err = tx.Exec(stmt, step.Name, step.file, step.hash, step.pkg, now)
+		_, err = tx.Exec(stmt, step.migrate, step.file, step.hash, step.pkg, now)
 		if err != nil {
 			_ = tx.Rollback()
 			return false, fmt.Errorf(

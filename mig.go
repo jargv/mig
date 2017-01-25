@@ -3,18 +3,17 @@ package mig
 import (
 	"database/sql"
 	"fmt"
+	"regexp"
 	"runtime"
 	"strings"
 )
 
 // TODO: support for logging
 // TODO: better readme, docs
-// TODO: consider a method for creating a new baseline. For example, keep
-//       the data in an existing installment, but pretend like it's
-//       migrations came from the new refactored versions of the migrations.
 
 // DB is an interface that allows you to use the standard *sql.DB or a *sqlx.DB
 // (or any other connection that implements the interface!)
+// todo: make this actually work without sqlx
 type DB interface {
 	Exec(query string, args ...interface{}) (sql.Result, error)
 	Begin() (*sql.Tx, error)
@@ -22,26 +21,45 @@ type DB interface {
 	DriverName() string
 }
 
+type step struct {
+	migrate string
+
+	isPrereq bool
+
+	hash  string
+	file  string
+	pkg   string
+	order int
+}
+
+type Prereq string
+
 var registered map[string][]*series
 
 // Register queues a MigrationSet to be exectued when mig.Run(...) is called
-func Register(steps []Step) {
+func Register(steps ...interface{}) {
 	// get the file name of the calling function
-
 	filename, packagename := callerInfo()
 
 	ser := &series{}
-	ser.steps = make([]Step, len(steps))
+	ser.steps = make([]step, len(steps))
 	for i := range steps {
-		ser.steps[i] = steps[i]
+		switch s := steps[i].(type) {
+		case string:
+			ser.steps[i] = step{
+				migrate: s,
+			}
+		case Prereq:
+			ser.steps[i] = step{
+				migrate:  string(s),
+				isPrereq: true,
+			}
+		}
 		step := &ser.steps[i]
 		step.cleanWhitespace()
 		step.computeHash()
 		step.file = filename
 		step.pkg = packagename
-		if step.Name == "" {
-			step.Name = fmt.Sprintf("unnamed-%d", i)
-		}
 	}
 
 	if registered == nil {
@@ -119,12 +137,12 @@ func checkMigrationTable(db DB) error {
 	_, err := db.Query(`select 1 from MIG_RECORDED_MIGRATIONS`)
 	if err != nil {
 		_, err = db.Exec(`
-			CREATE TABLE MIG_RECORDED_MIGRATIONS (
-				name   TEXT,
-				file   TEXT,
-				pkg    TEXT,
-				time   TIMESTAMP,
-				hash   TEXT
+			CREATE TABLE MIG_RECORDED_MIGRATIONS(
+				sql_text TEXT,
+				file     TEXT,
+				pkg      TEXT,
+				time     TIMESTAMP,
+				hash     TEXT
 			)
 		`)
 		if err != nil {
@@ -190,5 +208,10 @@ func callerInfo() (string, string) {
 	} else {
 		packagename = strings.Join(parts[:len(parts)-1], ".")
 	}
+
+	//init functions end up with .initN
+	reg := regexp.MustCompile(`\.init\d*$`)
+	packagename = reg.ReplaceAllString(packagename, "")
+
 	return filename, packagename
 }
