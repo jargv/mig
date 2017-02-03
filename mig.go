@@ -169,8 +169,7 @@ func fetchRecordedSteps(db DB, pkgs []string) (map[string]struct{}, error) {
 	stmt := fmt.Sprintf(`
 		SELECT hash
 		FROM   MIG_RECORDED_MIGRATIONS
-		WHERE  pkg in (%s)
-	`, "'"+strings.Join(pkgs, "','")+"'")
+	`)
 	rows, err := db.Query(stmt)
 	if err != nil {
 		return nil, err
