@@ -8,6 +8,9 @@ tool. ;)
 
 ## Registering Migrations
 
+The first step is to register your migrations. Call
+mig.RegisterMigrations, passing it any number of strings.
+
 ```go
 func init(){
   mig.RegisterMigrations(
@@ -62,16 +65,16 @@ func init(){
     // to pause at this point until the query no longer returns
     // an error. Other migration sequences will be given a chance
     // to run before this query is retried.
-    mig.Prereq(`select 1 from app_user`),
+    mig.Prereq(`select 1 from app_user limit 0`),
     `
       CREATE TABLE photos (
         id int NOT NULL,
         owner_user_id int NOT NULL,
 
         -- this would fail if the app_user table wasn't created
-        -- however, the `mig.Prereq` query above ensures that
+        -- however, the 'mig.Prereq' query above ensures that
         -- the migration which creates the app_user table
-        -- will have run before this query
+        -- will have run before this migration runs
         FOREIGN KEY (owner_user_id) REFERENCES app_user(id)
 
         ... other columns
