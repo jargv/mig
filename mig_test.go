@@ -164,7 +164,7 @@ func testPrereq(t *testing.T, db *sqlx.DB) {
 	// now try the migrations again to make sure it works out
 	registered = nil
 	RegisterMigrations(
-		Prereq(` select 1 from test_prereq`),
+		Prereq(`select 1 from test_prereq`),
 		`alter table test_prereq add column food varchar(20)`,
 	)
 

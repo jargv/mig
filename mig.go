@@ -137,7 +137,7 @@ func runSteps(db DB, hashes map[string]struct{}, allSeries []*series) error {
 
 		//if no progress was made, we're in an infinite loop
 		if !progressMade {
-			return fmt.Errorf("Unable to make progress on migration steps: %#v", allSeries)
+			return &progressError{allSeries}
 		}
 	}
 
