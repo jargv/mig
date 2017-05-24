@@ -3,6 +3,7 @@ package mig
 import (
 	"database/sql"
 	"fmt"
+	"log"
 	"regexp"
 	"runtime"
 	"strings"
@@ -37,7 +38,8 @@ func MakeDB(driver string, d *sql.DB) *db {
 }
 
 type step struct {
-	migrate string
+	migrate     string
+	migrateFunc func(*sql.Tx) error
 
 	isPrereq bool
 
@@ -48,6 +50,15 @@ type step struct {
 }
 
 type Prereq string
+
+type function struct {
+	name   string
+	action func(*sql.Tx) error
+}
+
+func Function(name string, action func(*sql.Tx) error) function {
+	return function{name, action}
+}
 
 var registered map[string][]*series
 
@@ -69,6 +80,13 @@ func RegisterMigrations(steps ...interface{}) {
 				migrate:  string(s),
 				isPrereq: true,
 			}
+		case function:
+			ser.steps[i] = step{
+				migrate:     "migration function: " + s.name,
+				migrateFunc: s.action,
+			}
+		default:
+			log.Fatalf("mig.RegisterMigrations called with unsupported type %T", steps[i])
 		}
 		step := &ser.steps[i]
 		step.cleanWhitespace()

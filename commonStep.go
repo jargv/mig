@@ -7,6 +7,10 @@ import (
 )
 
 func (s *step) computeHash() {
+	if s.migrateFunc != nil {
+		s.hash = s.migrate
+		return
+	}
 	sum := md5.Sum([]byte(s.migrate))
 	b64 := base64.StdEncoding.EncodeToString(sum[:])
 	s.hash = string(b64[:])

@@ -1,6 +1,7 @@
 package mig
 
 import (
+	"database/sql"
 	"os/exec"
 	"strings"
 	"sync"
@@ -62,6 +63,9 @@ func Test(t *testing.T) {
 	mysql.SetMaxOpenConns(30)
 
 	t.Run("database lock", func(t *testing.T) {
+		if testing.Short() {
+			t.Skip("skipping lock for faster tests")
+		}
 		testDatabaseLock(t, pg)
 		testDatabaseLock(t, mysql)
 	})
@@ -79,6 +83,11 @@ func Test(t *testing.T) {
 	t.Run("whitespace", func(t *testing.T) {
 		testWhitespace(t, pg)
 		testWhitespace(t, mysql)
+	})
+
+	t.Run("function", func(t *testing.T) {
+		testFunctionMigrations(t, pg)
+		testFunctionMigrations(t, mysql)
 	})
 }
 
@@ -226,6 +235,37 @@ func testWhitespace(t *testing.T, db *sqlx.DB) {
 	if result.Survive != 42 {
 		t.Fatalf(`result.Survive != 42, result.Survive == "%v"`, result.Survive)
 	}
+}
+
+func testFunctionMigrations(t *testing.T, db *sqlx.DB) {
+	RegisterMigrations(
+		`create table numbers(num int)`,
+		`insert into numbers values (10), (20), (30)`,
+		Function("double all rows", func(tx *sql.Tx) error {
+			_, err := tx.Exec(`
+			  insert into numbers(num)
+				select num from numbers
+			`)
+
+			return err
+		}),
+	)
+
+	err := RunMigrations(MakeDB(db.DriverName(), db.DB))
+	if err != nil {
+		t.Fatalf("running migrations: %v\n", err)
+	}
+
+	sum := 0
+	err = db.Get(&sum, `select SUM(num) from numbers`)
+	if err != nil {
+		t.Fatalf("bad query: %v\n", err)
+	}
+
+	if sum != 120 {
+		t.Fatalf(`sum != 60, sum == "%v"`, sum)
+	}
+
 }
 
 func testDatabaseLock(t *testing.T, db *sqlx.DB) {

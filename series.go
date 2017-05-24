@@ -39,21 +39,25 @@ func (s *series) tryProgress(db DB, hashes map[string]struct{}) (bool, error) {
 		}
 
 		tx, err := db.Begin()
+		defer tx.Rollback()
 
 		if err != nil {
-			_ = tx.Rollback()
 			return false, err
 		}
 
-		_, err = tx.Exec(step.migrate)
+		if step.migrateFunc != nil {
+			err = step.migrateFunc(tx)
+		} else {
+			_, err = tx.Exec(step.migrate)
+		}
 
 		if err != nil {
-			_ = tx.Rollback()
 			return false, fmt.Errorf(
 				"couldn't execute migration': %v\n"+
 					"file: %s\n"+
 					"sql: `%s`",
-				err, step.file, step.migrate,
+				"hash: `%s`",
+				err, step.file, step.migrate, step.hash,
 			)
 		}
 
@@ -72,7 +76,6 @@ func (s *series) tryProgress(db DB, hashes map[string]struct{}) (bool, error) {
 
 		err = tx.Commit()
 		if err != nil {
-			tx.Rollback()
 			return false, fmt.Errorf("couldn't commit transaction: %v", err)
 		}
 
@@ -80,5 +83,4 @@ func (s *series) tryProgress(db DB, hashes map[string]struct{}) (bool, error) {
 	}
 
 	return progress, nil
-
 }
