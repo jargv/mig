@@ -2,6 +2,7 @@ package mig
 
 import (
 	"errors"
+	"log"
 	"sync"
 	"time"
 )
@@ -28,11 +29,13 @@ func WithDatabaseLock(db DB, timeout time.Duration, callback func() error) error
 			break
 		}
 
+		log.Printf("err: %#v", err)
+
 		if time.Now().Sub(start) > timeout {
 			return ErrDatabaseLockTimout
 		}
 
-		time.Sleep(500 * time.Millisecond)
+		time.Sleep(1500 * time.Millisecond)
 	}
 
 	defer func() {
