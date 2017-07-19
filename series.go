@@ -2,6 +2,8 @@ package mig
 
 import (
 	"fmt"
+	"log"
+	"strings"
 	"time"
 )
 
@@ -45,6 +47,7 @@ func (s *series) tryProgress(db DB, hashes map[string]struct{}) (bool, error) {
 			return false, err
 		}
 
+		log.Printf("executing migration: %.60s\n", strings.Replace(step.migrate, "\n", "\\n", -1))
 		if step.migrateFunc != nil {
 			err = step.migrateFunc(tx)
 		} else {
@@ -60,6 +63,7 @@ func (s *series) tryProgress(db DB, hashes map[string]struct{}) (bool, error) {
 				err, step.file, step.migrate, step.hash,
 			)
 		}
+		log.Printf("finished migration: %.60s\n", strings.Replace(step.migrate, "\n", "\\n", -1))
 
 		now := time.Now()
 		stmt := fmt.Sprintf(`
