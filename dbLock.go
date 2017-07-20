@@ -6,8 +6,6 @@ import (
 	"math/rand"
 	"sync"
 	"time"
-
-	"github.com/go-sql-driver/mysql"
 )
 
 var mutex = sync.Mutex{}
@@ -37,12 +35,6 @@ func WithDatabaseLock(db DB, timeout time.Duration, callback func() error) error
 			} else {
 				break
 			}
-		}
-
-		if mysqlErr, ok := err.(*mysql.MySQLError); ok && mysqlErr.Number == 0x426 {
-			// this is the only error we do nothing with
-		} else {
-			log.Printf("err: %#v", err)
 		}
 
 		if time.Now().Sub(start) > timeout {
