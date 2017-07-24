@@ -86,6 +86,26 @@ func init(){
 
 ```
 
+## Logging
+
+By default mig is pretty quiet about what it's doing, unless
+it encounters an error, in which case it calls log.Fatalf
+(which then calls os.Exit(1)).
+
+To customize how logging works, pass a mig.Logger (which is
+already implemented by log.Logger) to mig.SetLogger. If you
+don't want errors to be fatal, pass a custom type which
+implements Fatalf without calling os.Exit.
+
+```go
+  mig.SetLogger(log.New(os.Stdout, "migrations:", 0))
+  // -- or --
+  mig.SetLogger(myCustomLogger)
+
+  // run with whatever logger is set
+  mig.RunMigrations(db)
+```
+
 ## Support
 
 Mig supports mysql and postgres. It may also work with other dbs,

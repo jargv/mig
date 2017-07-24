@@ -2,6 +2,8 @@ package mig
 
 import (
 	"database/sql"
+	stdlog "log"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -24,6 +26,10 @@ import (
 	alter user testuser password 'testpassword'
 	alter user testuser createdb;
 */
+
+func init() {
+	SetLogger(stdlog.New(os.Stdout, "migrations: ", 0))
+}
 
 func Test(t *testing.T) {
 	//create the postgres table
@@ -66,7 +72,6 @@ func Test(t *testing.T) {
 		if testing.Short() {
 			t.Skip("skipping lock for faster tests")
 		}
-		testDatabaseLock(t, pg)
 		testDatabaseLock(t, mysql)
 	})
 

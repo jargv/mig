@@ -3,13 +3,13 @@ package mig
 import (
 	"database/sql"
 	"fmt"
-	"log"
 	"regexp"
 	"runtime"
 	"strings"
+	"time"
 )
 
-// TODO: support for logging
+// TODO: support WithDatabaseLock on postgres
 // TODO: better readme, docs
 // TODO: clean up the implementation, there's still remnants from when
 //       it was much more complicated
@@ -82,7 +82,7 @@ func RegisterMigrations(steps ...interface{}) {
 			}
 		case function:
 			ser.steps[i] = step{
-				migrate:     "migration function: " + s.name,
+				migrate:     fmt.Sprintf("migration function: '%s'", s.name),
 				migrateFunc: s.action,
 			}
 		default:
@@ -105,6 +105,7 @@ func RegisterMigrations(steps ...interface{}) {
 // Run executes the migration Steps which have been registered by `mig.Register`
 // on the given database connection
 func RunMigrations(db DB) error {
+	start := time.Now()
 	err := checkMigrationTable(db)
 	if err != nil {
 		return fmt.Errorf("creating migration table: %v", err)
@@ -122,7 +123,10 @@ func RunMigrations(db DB) error {
 		return fmt.Errorf("fetching previous migrations: %v", err)
 	}
 
-	return runSteps(db, recorded, allSeries)
+	err = runSteps(db, recorded, allSeries)
+	elapsed := time.Now().Sub(start)
+	log.Printf("all migrations finished in: %s\n\n", elapsed)
+	return err
 }
 
 func runSteps(db DB, hashes map[string]struct{}, allSeries []*series) error {
