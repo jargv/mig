@@ -15,7 +15,7 @@ func WithDatabaseLock(db DB, timeout time.Duration, callback func() error) error
 
 	if db.DriverName() == "mysql" {
 		_, _ = db.Exec(`
-			CREATE TABLE MIG_DATABASE_LOCK_V2 (
+		CREATE TABLE IF NOT EXISTS MIG_DATABASE_LOCK_V2 (
 				id       BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
 				lock_row INT,
 				UNIQUE   (lock_row)
