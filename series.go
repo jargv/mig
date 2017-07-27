@@ -2,6 +2,7 @@ package mig
 
 import (
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -20,6 +21,18 @@ func (s *series) currentStepIsAlreadyDone(hashes map[string]struct{}) bool {
 	return ok
 }
 
+func FirstLine(str string) string {
+	parts := strings.Split(str, "\n")
+	switch len(parts) {
+	case 0:
+		return str
+	case 1:
+		return parts[0]
+	default:
+		return parts[0] + "..."
+	}
+}
+
 func (s *series) tryProgress(db DB, hashes map[string]struct{}) (bool, error) {
 	progress := false
 
@@ -31,8 +44,10 @@ func (s *series) tryProgress(db DB, hashes map[string]struct{}) (bool, error) {
 		step := s.steps[s.currentStep]
 
 		if step.isPrereq {
+			log.Printf("checking prerequisite: `%s`\n\n", FirstLine(step.migrate))
 			_, err := db.Exec(step.migrate)
 			if err != nil {
+				log.Printf("prerequisite: `%s` failed, trying next set\n\n", FirstLine(step.migrate))
 				return progress, nil
 			}
 			continue //prereqs don't have migrations after them
@@ -45,11 +60,15 @@ func (s *series) tryProgress(db DB, hashes map[string]struct{}) (bool, error) {
 			return false, err
 		}
 
+		start := time.Now()
+		log.Printf("starting: %s\n", FirstLine(step.migrate))
 		if step.migrateFunc != nil {
 			err = step.migrateFunc(tx)
 		} else {
 			_, err = tx.Exec(step.migrate)
 		}
+		elapsed := time.Now().Sub(start)
+		log.Printf("finished: %s (%s)\n\n", FirstLine(step.migrate), elapsed)
 
 		if err != nil {
 			return false, fmt.Errorf(
