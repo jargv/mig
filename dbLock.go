@@ -14,13 +14,27 @@ func WithDatabaseLock(db DB, timeout time.Duration, callback func() error) error
 	start := time.Now()
 
 	if db.DriverName() == "mysql" {
-		_, _ = db.Exec(`
-		CREATE TABLE IF NOT EXISTS MIG_DATABASE_LOCK_V2 (
-				id       BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-				lock_row INT,
-				UNIQUE   (lock_row)
-			)
+		countRow := db.QueryRow(`
+			SELECT COUNT(1) FROM information_schema.tables WHERE table_schema = schema() AND table_name = 'MIG_DATABASE_LOCK_V2';
 		`)
+
+		var count int
+		err := countRow.Scan(&count)
+
+		if err != nil {
+			log.Fatalf("error trying to check for lock table existence: %s", err)
+		}
+
+		if count == 0 {
+			log.Printf("Creating lock table (MIG_DATABASE_LOCK_V2)")
+			_, _ = db.Exec(`
+				CREATE TABLE IF NOT EXISTS MIG_DATABASE_LOCK_V2 (
+						id       BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+						lock_row INT,
+						UNIQUE   (lock_row)
+					)
+				`)
+		}
 	} else {
 		log.Fatalf("mig.WithDatabaseLock not supported for driver: '%s'", db.DriverName())
 	}
